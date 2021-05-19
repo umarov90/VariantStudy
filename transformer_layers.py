@@ -1,5 +1,6 @@
 import numpy as np
 import tensorflow as tf
+import tensorflow.keras.layers as layers
 
 def get_angles(pos, i, d_model):
   angle_rates = 1 / np.power(10000, (2 * (i//2)) / np.float32(d_model))
@@ -19,17 +20,6 @@ def positional_encoding(position, d_model):
   pos_encoding = angle_rads[np.newaxis, ...]
 
   return tf.cast(pos_encoding, dtype=tf.float32)
-
-def create_padding_mask(seq):
-  seq = tf.cast(tf.math.equal(seq, 0), tf.float32)
-
-  # add extra dimensions to add the padding
-  # to the attention logits.
-  return seq[:, tf.newaxis, tf.newaxis, :]  # (batch_size, 1, 1, seq_len)
-
-def create_look_ahead_mask(size):
-  mask = 1 - tf.linalg.band_part(tf.ones((size, size)), -1, 0)
-  return mask  # (seq_len, seq_len)
 
 def scaled_dot_product_attention(q, k, v, mask):
   """Calculate the attention weights.
@@ -183,14 +173,18 @@ class DecoderLayer(tf.keras.layers.Layer):
     return out3, attn_weights_block1, attn_weights_block2
 
 class Encoder(tf.keras.layers.Layer):
-  def __init__(self, num_layers, d_model, num_heads, dff, input_vocab_size,
+  def __init__(self, num_layers, d_model, num_heads, dff,
                maximum_position_encoding, rate=0.1):
     super(Encoder, self).__init__()
 
     self.d_model = d_model
     self.num_layers = num_layers
 
-    self.embedding = tf.keras.layers.Embedding(input_vocab_size, d_model)
+    self.dropout_in = tf.keras.layers.Dropout(0.5)
+    self.cl1 = layers.Conv1D(128, 15, padding='valid', activation='relu')
+    self.cl2 = layers.Conv1D(128, 15, padding='valid', strides=2, activation='relu')
+    self.cl3 = layers.Conv1D(128, 15, padding='valid', strides=7, activation='relu')
+    self.cl4 = layers.Conv1D(128, 15, padding='valid', strides=7, activation='relu')
     self.pos_encoding = positional_encoding(maximum_position_encoding,
                                             self.d_model)
 
@@ -202,9 +196,13 @@ class Encoder(tf.keras.layers.Layer):
   def call(self, x, training, mask):
 
     seq_len = tf.shape(x)[1]
+    cbs = tf.shape(x)[0]
 
+    # x = self.dropout_in(x)
     # adding embedding and position encoding.
-    x = self.embedding(x)  # (batch_size, input_seq_len, d_model)
+    # (batch_size, input_seq_len, d_model)
+
+    x = tf.reshape(x, [cbs, seq_len, -1])
     x *= tf.math.sqrt(tf.cast(self.d_model, tf.float32))
     x += self.pos_encoding[:, :seq_len, :]
 
@@ -216,14 +214,14 @@ class Encoder(tf.keras.layers.Layer):
     return x  # (batch_size, input_seq_len, d_model)
 
 class Decoder(tf.keras.layers.Layer):
-  def __init__(self, num_layers, d_model, num_heads, dff, target_vocab_size,
+  def __init__(self, num_layers, d_model, num_heads, dff,
                maximum_position_encoding, rate=0.1):
     super(Decoder, self).__init__()
 
     self.d_model = d_model
     self.num_layers = num_layers
 
-    self.embedding = tf.keras.layers.Embedding(target_vocab_size, d_model)
+    self.dn = layers.Dense(d_model)
     self.pos_encoding = positional_encoding(maximum_position_encoding, d_model)
 
     self.dec_layers = [DecoderLayer(d_model, num_heads, dff, rate)
@@ -236,7 +234,7 @@ class Decoder(tf.keras.layers.Layer):
     seq_len = tf.shape(x)[1]
     attention_weights = {}
 
-    x = self.embedding(x)  # (batch_size, target_seq_len, d_model)
+    x = self.dn(x)  # (batch_size, target_seq_len, d_model)
     x *= tf.math.sqrt(tf.cast(self.d_model, tf.float32))
     x += self.pos_encoding[:, :seq_len, :]
 
@@ -253,17 +251,16 @@ class Decoder(tf.keras.layers.Layer):
     return x, attention_weights
 
 class Transformer(tf.keras.Model):
-  def __init__(self, num_layers, d_model, num_heads, dff, input_vocab_size,
-               target_vocab_size, pe_input, pe_target, rate=0.1):
+  def __init__(self, num_layers, d_model, num_heads, dff, target_size, pe_input, pe_target, rate=0.1):
     super(Transformer, self).__init__()
 
     self.tokenizer = Encoder(num_layers, d_model, num_heads, dff,
-                             input_vocab_size, pe_input, rate)
+                             pe_input, rate)
 
     self.decoder = Decoder(num_layers, d_model, num_heads, dff,
-                           target_vocab_size, pe_target, rate)
+                           pe_target, rate)
 
-    self.final_layer = tf.keras.layers.Dense(target_vocab_size)
+    self.final_layer = tf.keras.layers.Dense(target_size)
 
   def call(self, inp, tar, training, enc_padding_mask,
            look_ahead_mask, dec_padding_mask):
@@ -292,3 +289,36 @@ class CustomSchedule(tf.keras.optimizers.schedules.LearningRateSchedule):
     arg2 = step * (self.warmup_steps ** -1.5)
 
     return tf.math.rsqrt(self.d_model) * tf.math.minimum(arg1, arg2)
+
+
+def create_padding_mask(seq):
+  # seq = tf.cast(tf.math.equal(seq, 0), tf.float32)
+
+  # add extra dimensions to add the padding
+  # to the attention logits.
+  # seq[:, tf.newaxis, tf.newaxis, :]  # (batch_size, 1, 1, seq_len)
+  return tf.zeros((137, 1, 1, tf.shape(seq)[1]))
+
+
+def create_look_ahead_mask(size):
+  mask = 1 - tf.linalg.band_part(tf.ones((size, size)), -1, 0)
+  return mask  # (seq_len, seq_len)
+
+
+def create_masks(inp, tar):
+  # Encoder padding mask
+  enc_padding_mask = create_padding_mask(inp)
+
+  # Used in the 2nd attention block in the decoder.
+  # This padding mask is used to mask the encoder outputs.
+  dec_padding_mask = create_padding_mask(inp)
+
+  # Used in the 1st attention block in the decoder.
+  # It is used to pad and mask future tokens in the input received by
+  # the decoder.
+  look_ahead_mask = create_look_ahead_mask(tf.shape(tar)[1])
+  dec_target_padding_mask = create_padding_mask(tar)
+
+  combined_mask = tf.maximum(dec_target_padding_mask, look_ahead_mask)
+
+  return enc_padding_mask, combined_mask, dec_padding_mask

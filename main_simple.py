@@ -15,13 +15,15 @@ from tensorflow.keras.optimizers import Adam
 from scipy import stats
 import matplotlib
 import matplotlib.pyplot as plt
+from heapq import nsmallest
+
 matplotlib.use("agg")
+
 
 def train():
     input_size = 601
-    num_regions = 21
-    half_num_regions = int((num_regions - 1) / 2)
-    max_shift = 100
+    num_regions = 4
+    max_shift = 40
     good_chr = ["chrX", "chrY"]
     for i in range(2, 23):
         good_chr.append("chr" + str(i))
@@ -32,18 +34,15 @@ def train():
         genome = cm.parse_genome("hg19.fa")
         pickle.dump(genome, open("ranges.p", "wb"), protocol=pickle.HIGHEST_PROTOCOL)
 
-    ranges_file = "DMFB_IPSC.CRE.coord.bed"
-    if Path("ranges.p").is_file():
-        ranges = pickle.load(open("ranges.p", "rb"))
-    else:
-        ranges = read_ranges_2(ranges_file, good_chr)
-        pickle.dump(ranges, open("ranges.p", "wb"), protocol=pickle.HIGHEST_PROTOCOL)
+    df = pd.read_csv("DMFB_IPSC.CRE.info.tsv", sep="\t")
 
-    if Path("test_ranges.p").is_file():
-        test_ranges = pickle.load(open("test_ranges.p", "rb"))
-    else:
-        test_ranges = read_ranges_2(ranges_file, ["chr1"])
-        pickle.dump(test_ranges, open("test_ranges.p", "wb"), protocol=pickle.HIGHEST_PROTOCOL)
+    enhancers_ids = df.query("classc == 'distal'")['CREID'].to_list()
+    promoters_ids = df.query("classc != 'distal'")['CREID'].to_list()
+
+    ranges_file = "DMFB_IPSC.CRE.coord.bed"
+    promoters, enhancers = read_ranges_2(ranges_file, good_chr, promoters_ids, enhancers_ids)
+    test_promoters, test_enhancers = read_ranges_2(ranges_file, ["chr1"], promoters_ids, enhancers_ids)
+
 
     if Path("counts.p").is_file():
         counts = pickle.load(open("counts.p", "rb"))
@@ -62,10 +61,11 @@ def train():
                 continue
             else:
                 continue
+
     num_cells = len(counts)
-    # model = m.simple_model(input_size, num_regions, num_cells)
-    # model.compile(loss="mse", optimizer=Adam(lr=1e-4))
-    # callback = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True)
+    model = m.simple_model(input_size, num_regions, num_cells)
+    model.compile(loss="mse", optimizer=Adam(lr=1e-4))
+    callback = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True)
 
     if Path("input_sequences_long.p").is_file():
         input_sequences_long = pickle.load(open("input_sequences_long.p", "rb"))
@@ -75,16 +75,27 @@ def train():
     else:
         test_input_sequences = []
         test_output = []
-        for chr, chr_cres in test_ranges.items():
-            for i in range(half_num_regions, len(chr_cres) - half_num_regions, 1):
+        for chr, chr_cres in test_promoters.items():
+            for i in range(len(chr_cres)):
                 cres = []
                 scores = []
-                for j in range(half_num_regions + 1, -1 * half_num_regions, -1):
-                    cres.append(get_seq(genome, chr, chr_cres[i - j][0], input_size))
-                    sub_scores = []
-                    for cell in sorted(counts.keys()):
-                        sub_scores.append(counts[cell][chr_cres[i - j][1]])
-                    scores.append(sub_scores)
+                chr_enhancers = test_enhancers[chr]
+                enhs = nsmallest(num_regions - 1, chr_enhancers, key=lambda x: abs(x[0] - chr_cres[i][0]))
+                for e in enhs:
+                    if abs(e[0] - chr_cres[i][0]) < 200000:
+                        cres.append(get_seq(genome, chr, e[0], input_size))
+                        sub_scores = []
+                        for cell in sorted(counts.keys()):
+                            sub_scores.append(counts[cell][e[1]])
+                        scores.append(sub_scores)
+                while len(cres) < num_regions - 1:
+                    cres.append(np.zeros((input_size, 4)).astype(np.bool))
+                    scores.append(np.zeros(2))
+                cres.append(get_seq(genome, chr, chr_cres[i][0], input_size))
+                sub_scores = []
+                for cell in sorted(counts.keys()):
+                    sub_scores.append(counts[cell][chr_cres[i][1]])
+                scores.append(sub_scores)
                 test_input_sequences.append(cres)
                 test_output.append(scores)
         test_input_sequences = np.asarray(test_input_sequences)
@@ -92,19 +103,29 @@ def train():
 
         input_sequences_long = []
         output_scores = []
-        for chr, chr_cres in ranges.items():
-            for i in range(half_num_regions, len(chr_cres) - half_num_regions, 1):
+        for chr, chr_cres in promoters.items():
+            for i in range(len(chr_cres)):
                 cres = []
                 scores = []
-                for j in range(half_num_regions + 1, -1 * half_num_regions, -1):
-                    cres.append(get_seq(genome, chr, chr_cres[i - j][0], input_size + max_shift))
-                    sub_scores = []
-                    for cell in sorted(counts.keys()):
-                        sub_scores.append(counts[cell][chr_cres[i - j][1]])
-                    scores.append(sub_scores)
+                chr_enhancers = enhancers[chr]
+                enhs = nsmallest(num_regions - 1, chr_enhancers, key=lambda x: abs(x[0] - chr_cres[i][0]))
+                for e in enhs:
+                    if abs(e[0] - chr_cres[i][0]) < 200000:
+                        cres.append(get_seq(genome, chr, e[0], input_size + max_shift))
+                        sub_scores = []
+                        for cell in sorted(counts.keys()):
+                            sub_scores.append(counts[cell][e[1]])
+                        scores.append(sub_scores)
+                while len(cres) < num_regions - 1:
+                    cres.append(np.zeros((input_size + max_shift, 4)).astype(np.bool))
+                    scores.append(np.zeros(2))
+                cres.append(get_seq(genome, chr, chr_cres[i][0], input_size + max_shift))
+                sub_scores = []
+                for cell in sorted(counts.keys()):
+                    sub_scores.append(counts[cell][chr_cres[i][1]])
+                scores.append(sub_scores)
                 input_sequences_long.append(cres)
                 output_scores.append(scores)
-
         input_sequences_long = np.asarray(input_sequences_long)
         output_scores = np.asarray(output_scores)
 
@@ -118,67 +139,65 @@ def train():
     #     new_arr = seq.reshape((seq.shape[0], -1))
     #     input_sequences.append(new_arr)
     # input_sequences = np.asarray(input_sequences)
-    test_features = tf.convert_to_tensor(test_input_sequences, dtype=tf.float32)
 
     prev_model = None
     for k in range(150):
         input_sequences = []
         for seq in input_sequences_long:
-            rand_var = 50 # random.randint(0, max_shift)
+            rand_var = 20 # random.randint(0, max_shift)
             ns = seq[:, rand_var: rand_var + input_size, :]
             # new_arr = ns.reshape((ns.shape[0], -1))
             input_sequences.append(ns)
         input_sequences = np.asarray(input_sequences)
-        features = tf.convert_to_tensor(input_sequences, dtype=tf.float32)
-        targets = tf.convert_to_tensor(output_scores, dtype=tf.float32)
-        dataset = tf.data.Dataset.from_tensor_slices((features, targets))
-        dataset = dataset.shuffle(len(features), reshuffle_each_iteration=True)
 
-        if prev_model == None:
-            transformer, optimizer = model.attention_model(dataset, num_cells, num_regions)
-        else:
-            transformer, optimizer = model.attention_model(dataset, num_cells, num_regions, prev_model)
-
+        model.fit(input_sequences, output_scores, epochs=1, batch_size=64, validation_split=0.1,
+                  callbacks=[callback])
+        print("Epoch " + str(k))
         print("Training set")
-        train_dataset = tf.data.Dataset.from_tensor_slices(features[:1000])
-        predictions = model.evaluate(train_dataset, transformer, num_regions, num_cells)
+        predictions = model.predict(input_sequences)
 
         for c, cell in enumerate(sorted(counts.keys())):
             a = []
             b = []
-            a1 = []
-            b1 = []
             for i in range(len(predictions)):
-                a.append(predictions[i][half_num_regions][c])
-                b.append(output_scores[i][half_num_regions][c])
-                a1.append(np.max(predictions[i][:, c]))
-                b1.append(np.max(output_scores[i][:, c]))
-            corr = stats.pearsonr(a, b)[0]
+                a.append(predictions[i][-1][c])
+                b.append(output_scores[i][-1][c])
+            corr = stats.spearmanr(a, b)[0]
             print("Correlation " + cell + ": " + str(corr))
-            corr = stats.pearsonr(a1, b1)[0]
-            print("Correlation1 " + cell + ": " + str(corr))
         print("Test set")
-        test_dataset = tf.data.Dataset.from_tensor_slices(test_features[:1000])
-        predictions = model.evaluate(test_dataset, transformer, num_regions, num_cells)
+        predictions = model.predict(test_input_sequences)
 
         for c, cell in enumerate(sorted(counts.keys())):
             a = []
             b = []
-            a1 = []
-            b1 = []
             for i in range(len(predictions)):
-                a.append(predictions[i][half_num_regions][c])
-                b.append(test_output[i][half_num_regions][c])
-                a1.append(np.max(predictions[i][:, c]))
-                b1.append(np.max(output_scores[i][:, c]))
-            corr = stats.pearsonr(a, b)[0]
+                a.append(predictions[i][-1][c])
+                b.append(test_output[i][-1][c])
+            corr = stats.spearmanr(a, b)[0]
             print("Correlation " + cell + ": " + str(corr))
-            corr = stats.pearsonr(a1, b1)[0]
-            print("Correlation1 " + cell + ": " + str(corr))
+
+            a = []
+            b = []
+            for i in range(len(predictions)):
+                if test_output[i][0][c] == 0:
+                    continue
+                a.append(predictions[i][0][c])
+                b.append(test_output[i][0][c])
+            corr = stats.spearmanr(a, b)[0]
+            print("Enhancer 1 Correlation " + cell + ": " + str(corr))
+
+            a = []
+            b = []
+            for i in range(len(predictions)):
+                if test_output[i][1][c] == 0:
+                    continue
+                a.append(predictions[i][1][c])
+                b.append(test_output[i][1][c])
+            corr = stats.spearmanr(a, b)[0]
+            print("Enhancer 2 Correlation " + cell + ": " + str(corr))
         # vector = model.predict(np.asarray([sequences[0]]))
         # plt.plot(vector)
         # plt.savefig("figures/track.png")
-        prev_model = transformer, optimizer
 
 
 def read_ranges_1(file_path, good_chr):
@@ -202,9 +221,10 @@ def read_ranges_1(file_path, good_chr):
     return ranges
 
 
-def read_ranges_2(file_path, good_chr):
+def read_ranges_2(file_path, good_chr, pids, eids):
     counter = 0
-    ranges = {}
+    ranges_promoter = {}
+    ranges_enhancer = {}
     with open(file_path) as file:
         for line in file:
             if line.startswith("#"):
@@ -214,10 +234,13 @@ def read_ranges_2(file_path, good_chr):
             if chrn not in good_chr:
                 continue
             tss = int(vals[7]) - 1
-            ranges.setdefault(chrn, []).append([tss, vals[3]])
+            if vals[3] in pids:
+                ranges_promoter.setdefault(chrn, []).append([tss, vals[3]])
+            else:
+                ranges_enhancer.setdefault(chrn, []).append([tss, vals[3]])
             counter = counter + 1
     print(counter)
-    return ranges
+    return ranges_promoter, ranges_enhancer
 
 
 def get_seq(genome, chr, tss, input_size):

@@ -1,7 +1,4 @@
 import os
-
-# os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-# os.environ["CUDA_VISIBLE_DEVICES"] = '0'
 from tensorflow.keras import regularizers
 from tensorflow.keras.layers import LeakyReLU
 from tensorflow.keras.layers import Flatten
@@ -10,145 +7,258 @@ from tensorflow.keras.layers import Reshape
 from tensorflow.keras.layers import Dropout
 from tensorflow.keras.layers import Input
 from tensorflow.keras.models import Model
-from tensorflow.keras import layers
+import keras
+from keras import layers
+from keras.layers import Dense, Conv1D, BatchNormalization, Activation
+from keras.regularizers import l2
+from keras.layers import AveragePooling1D, Input, Flatten
+from keras.callbacks import ModelCheckpoint, LearningRateScheduler
+from keras.callbacks import ReduceLROnPlateau
 import tensorflow as tf
 import numpy as np
 import time
 import attention
 import transformer_layers as tl
 from scipy import stats
+import keras_transformer as kt
+from keras import backend as K
 
+# tf.compat.v1.disable_eager_execution()
+
+projection_dim = 128
+num_heads = 8
+transformer_units = [
+    projection_dim * 2,
+    projection_dim,
+]
+transformer_layers = 8
 
 def simple_model(input_size, num_regions, cell_num):
-    latent_dim = 128
-    l1_weight = 1e-8
-    input_shape = (num_regions, input_size, 4)
+    input_shape = (input_size, 4)
     inputs = Input(shape=input_shape)
     x = inputs
-    xd = Dropout(0.5, input_shape=(None, num_regions, input_size, 4))(x)
-    x = xd
-    x = layers.Conv1D(128, 3, padding='same', activation='relu')(x)
-    x = layers.Conv1D(128, 3, padding='same', activation='relu')(x)
-    # x = Dropout(0.5, input_shape=(None, num_regions, input_size, 128))(x)
-    x = Flatten()(x)
-    # x = Dense(latent_dim, use_bias=False, activity_regularizer=regularizers.l1(l1_weight))(x)
-    #
-    # x = Dense(128)(x)
-    # x = LeakyReLU(alpha=0.2)(x)
-    # x = Dense(128)(x)
-    # x = LeakyReLU(alpha=0.2)(x)
+    x = Dropout(0.3, input_shape=(None, input_size, 4))(x)
+    x = resnet_v2(x, 11)
+    num_patches = 785
+    x = Dropout(0.3, input_shape=(None, num_patches, 1597))(x)
 
-    x = Dense(cell_num * num_regions)(x)
-    outputs = Reshape((num_regions, cell_num))(x)
+    # Encode patches.
+    encoded_patches = PatchEncoder(num_patches, projection_dim)(x)
+
+    # Create multiple layers of the Transformer block.
+    for _ in range(transformer_layers):
+        # Layer normalization 1.
+        x1 = layers.LayerNormalization(epsilon=1e-6)(encoded_patches)
+        # Create a multi-head attention layer.
+        attention_output = layers.MultiHeadAttention(
+            num_heads=num_heads, key_dim=projection_dim, dropout=0.1
+        )(x1, x1)
+        # Skip connection 1.
+        x2 = layers.Add()([attention_output, encoded_patches])
+        # Layer normalization 2.
+        x3 = layers.LayerNormalization(epsilon=1e-6)(x2)
+        # MLP.
+        x3 = mlp(x3, hidden_units=transformer_units, dropout_rate=0.1)
+        # Skip connection 2.
+        encoded_patches = layers.Add()([x3, x2])
+
+    # Create a [batch_size, projection_dim] tensor.
+    representation = layers.LayerNormalization(epsilon=1e-6)(encoded_patches)
+    representation = layers.Flatten()(representation)
+    representation = layers.Dropout(0.5)(representation)
+
+    x = Dense(cell_num * num_regions)(representation)
+    x = LeakyReLU(alpha=0.2)(x)
+    outputs = Reshape((cell_num, num_regions))(x)
     model = Model(inputs, outputs, name="model")
     return model
 
 
-BATCH_SIZE = 137
-units = 512
-num_layers = 4
-d_model = 1184
-dff = 512
-num_heads = 8
-dropout_rate = 0.1
-EPOCHS = 2
+def resnet_layer(inputs,
+                 num_filters=16,
+                 kernel_size=3,
+                 strides=1,
+                 activation='relu',
+                 batch_normalization=True,
+                 conv_first=True):
+    """2D Convolution-Batch Normalization-Activation stack builder
 
-def attention_model(dataset, num_cells, num_regions, prev_model=None):
-    dataset = dataset.batch(BATCH_SIZE, drop_remainder=True)
-    steps_per_epoch = len(dataset)
-    if prev_model == None:
-        learning_rate = tl.CustomSchedule(d_model)
-        optimizer = tf.keras.optimizers.Adam(learning_rate, beta_1=0.9, beta_2=0.98,
-                                             epsilon=1e-9)
-        transformer = tl.Transformer(
-            num_layers=num_layers,
-            d_model=d_model,
-            num_heads=num_heads,
-            dff=dff,
-            target_vocab_size=num_cells,
-            pe_input=1000,
-            pe_target=1000,
-            rate=dropout_rate)
+    # Arguments
+        inputs (tensor): input tensor from input image or previous layer
+        num_filters (int): Conv2D number of filters
+        kernel_size (int): Conv2D square kernel dimensions
+        strides (int): Conv2D square stride dimensions
+        activation (string): activation name
+        batch_normalization (bool): whether to include batch normalization
+        conv_first (bool): conv-bn-activation (True) or
+            bn-activation-conv (False)
+
+    # Returns
+        x (tensor): tensor as input to the next layer
+    """
+    conv = Conv1D(num_filters,
+                  kernel_size=kernel_size,
+                  strides=strides,
+                  padding='same',
+                  kernel_regularizer=l2(1e-6),
+                  activity_regularizer=l2(1e-6))
+
+    x = inputs
+    if conv_first:
+        x = conv(x)
+        if batch_normalization:
+            x = BatchNormalization()(x)
+        if activation is not None:
+            x = Activation(activation)(x)
     else:
-        transformer = prev_model[0]
-        optimizer = prev_model[1]
-
-    checkpoint_path = "./training_checkpoints"
-
-    ckpt = tf.train.Checkpoint(transformer=transformer,
-                               optimizer=optimizer)
-
-    ckpt_manager = tf.train.CheckpointManager(ckpt, checkpoint_path, max_to_keep=5)
-
-    # if a checkpoint exists, restore the latest checkpoint.
-    if ckpt_manager.latest_checkpoint:
-        ckpt.restore(ckpt_manager.latest_checkpoint)
-        print('Latest checkpoint restored!!')
-        # return transformer, optimizer
-
-    def loss_function(real, pred):
-        # mask = tf.math.logical_not(tf.math.equal(real, 0))
-        loss_ = tf.keras.losses.mean_squared_error(real, pred)
-
-        # mask = tf.cast(mask, dtype=loss_.dtype)
-        # loss_ *= mask
-
-        return tf.reduce_mean(loss_)
+        if batch_normalization:
+            x = BatchNormalization()(x)
+        if activation is not None:
+            x = Activation(activation)(x)
+        x = conv(x)
+    return x
 
 
-    @tf.function()
-    def train_step(inp, tar):
-        tar_inp = tar[:, :-1]
-        tar_real = tar[:, 1:]
+def resnet_v2(input_x, depth):
+    """ResNet Version 2 Model builder [b]
 
-        with tf.GradientTape() as tape:
-            predictions, _ = transformer(inp, tar_inp,
-                                         True)
-            loss = loss_function(tar_real, predictions)
+    Stacks of (1 x 1)-(3 x 3)-(1 x 1) BN-ReLU-Conv2D or also known as
+    bottleneck layer
+    First shortcut connection per layer is 1 x 1 Conv2D.
+    Second and onwards shortcut connection is identity.
+    At the beginning of each stage, the feature map size is halved (downsampled)
+    by a convolutional layer with strides=2, while the number of filter maps is
+    doubled. Within each stage, the layers have the same number filters and the
+    same filter map sizes.
+    Features maps sizes:
+    conv1  : 32x32,  16
+    stage 0: 32x32,  64
+    stage 1: 16x16, 128
+    stage 2:  8x8,  256
 
-        gradients = tape.gradient(loss, transformer.trainable_variables)
-        optimizer.apply_gradients(zip(gradients, transformer.trainable_variables))
-        return loss
+    # Arguments
+        input_shape (tensor): shape of input image tensor
+        depth (int): number of core convolutional layers
+        num_classes (int): number of classes (CIFAR10 has 10)
 
-    for epoch in range(EPOCHS):
-        total_loss = 0
+    # Returns
+        model (Model): Keras model instance
+    """
+    if (depth - 2) % 9 != 0:
+        raise ValueError('depth should be 9n+2 (eg 56 or 110 in [b])')
+    # Start model definition.
+    num_filters_in = 16
+    num_res_blocks = int((depth - 2) / 9)
 
-        # inp -> portuguese, tar -> english
-        for (batch, (inp, tar)) in enumerate(dataset.take(steps_per_epoch)):
-            batch_loss = train_step(inp, tar)
-            total_loss += batch_loss
-            if batch % 100 == 0:
-                print(f'Epoch {epoch + 1} Batch {batch} Loss {batch_loss.numpy():.4f}')
+    # v2 performs Conv2D with BN-ReLU on input before splitting into 2 paths
+    x = resnet_layer(inputs=input_x,
+                     num_filters=num_filters_in,
+                     conv_first=True)
 
-        print(f'Epoch {epoch + 1} Loss {total_loss / steps_per_epoch:.4f}')
-        ckpt_save_path = ckpt_manager.save()
+    # Instantiate the stack of residual units
+    for stage in range(8):
+        for res_block in range(num_res_blocks):
+            activation = 'relu'
+            batch_normalization = True
+            strides = 1
+            if stage == 0:
+                num_filters_out = int(num_filters_in * 16) # changed from 4
+                if res_block == 0:  # first layer and first stage
+                    activation = None
+                    batch_normalization = False
+            else:
+                num_filters_out = int(num_filters_in * 1.3) # changed from 2
+                if res_block == 0:  # first layer but not first stage
+                    strides = 2    # downsample
 
-    return transformer, optimizer
+            # bottleneck residual unit
+            y = resnet_layer(inputs=x,
+                             num_filters=num_filters_in,
+                             kernel_size=1,
+                             strides=strides,
+                             activation=activation,
+                             batch_normalization=batch_normalization,
+                             conv_first=False)
+            y = resnet_layer(inputs=y,
+                             num_filters=num_filters_in,
+                             conv_first=False)
+            y = resnet_layer(inputs=y,
+                             num_filters=num_filters_out,
+                             kernel_size=1,
+                             conv_first=False)
+            if res_block == 0:
+                # linear projection residual shortcut connection to match
+                # changed dims
+                x = resnet_layer(inputs=x,
+                                 num_filters=num_filters_out,
+                                 kernel_size=1,
+                                 strides=strides,
+                                 activation=None,
+                                 batch_normalization=False)
+            x = keras.layers.add([x, y], name="add_res_" + str(stage) + "_" + str(res_block))
+
+        num_filters_in = num_filters_out
+
+    # Add classifier on top.
+    # v2 has BN-ReLU before Pooling
+    x = BatchNormalization()(x)
+    x = Activation('relu')(x)
+    # x = AveragePooling1D(pool_size=8)(x)
+
+    return x
 
 
-def evaluate(test_dataset, transformer, num_regions, num_cells, cheating):
-    results = []
-    test_dataset = test_dataset.batch(BATCH_SIZE, drop_remainder=True)
-    for batch in iter(test_dataset):
-        print("-", end="")
-        bs = len(batch)
-        # output = tf.zeros((bs, 1, num_cells))
-        output = cheating[:, :1, :]
-        for t in range(1, num_regions, 1):
-            # predictions.shape == (batch_size, seq_len, vocab_size)
-            predictions, attention_weights = transformer(batch,
-                                                         output,
-                                                         False)
+def get_callbacks():
+    lr_scheduler = LearningRateScheduler(lr_schedule)
+    lr_reducer = ReduceLROnPlateau(factor=np.sqrt(0.1),
+                                   cooldown=0,
+                                   patience=5,
+                                   min_lr=0.5e-6)
+    return [lr_reducer, lr_scheduler]
 
-            # select the last word from the seq_len dimension
-            predictions = predictions[:, -1:, :]  # (batch_size, 1, vocab_size)
 
-            # concatentate the predicted_id to the output which is given to the decoder
-            # as its input.
-            output = tf.concat([output, predictions], axis=1)
-        corr = stats.pearsonr(output.numpy()[:, :1, :].flatten(), cheating.numpy()[:, :1, :].flatten())[0]
-        print(corr)
-        result = output.numpy().squeeze()
-        results.extend(result)
-    print()
-    return results
+def lr_schedule(epoch):
+    """Learning Rate Schedule
+
+    Learning rate is scheduled to be reduced after 80, 120, 160, 180 epochs.
+    Called automatically every epoch as part of callbacks during training.
+
+    # Arguments
+        epoch (int): The number of epochs
+
+    # Returns
+        lr (float32): learning rate
+    """
+    lr = 1e-3
+    if epoch > 180:
+        lr *= 0.5e-3
+    elif epoch > 160:
+        lr *= 1e-3
+    elif epoch > 120:
+        lr *= 1e-2
+    elif epoch > 80:
+        lr *= 1e-1
+    print('Learning rate: ', lr)
+    return lr
+
+
+def mlp(x, hidden_units, dropout_rate):
+    for units in hidden_units:
+        x = layers.Dense(units, activation=tf.nn.gelu)(x)
+        x = layers.Dropout(dropout_rate)(x)
+    return x
+
+
+class PatchEncoder(layers.Layer):
+    def __init__(self, num_patches, projection_dim):
+        super(PatchEncoder, self).__init__()
+        self.num_patches = num_patches
+        self.projection = layers.Dense(units=projection_dim)
+        self.position_embedding = layers.Embedding(
+            input_dim=num_patches, output_dim=projection_dim
+        )
+
+    def call(self, patch):
+        positions = tf.range(start=0, limit=self.num_patches, delta=1)
+        encoded = self.projection(patch) + self.position_embedding(positions)
+        return encoded

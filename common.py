@@ -47,8 +47,9 @@ def clean_seq(s):
     return ns
 
 
-def parse_genome(g, chr1=False):
+def parse_genome(g, bin, chr1=False):
     fasta = {}
+    ga = {}
     seq = ""
     with open(g) as f:
         for line in f:
@@ -56,6 +57,7 @@ def parse_genome(g, chr1=False):
                 if len(seq) != 0:
                     seq = clean_seq(seq)
                     fasta[chrn] = seq
+                    ga[chrn] = np.zeros( int(len(seq)/bin) )
                     # print(chrn + " - " + str(len(seq)))
                     if chr1:
                         return fasta
@@ -70,8 +72,9 @@ def parse_genome(g, chr1=False):
         if len(seq) != 0:
             seq = clean_seq(seq)
             fasta[chrn] = seq
+            ga[chrn] = np.zeros( int(len(seq)/bin) )
             # print(chrn + " - " + str(len(seq)))
-    return fasta
+    return fasta, ga
 
 
 def parse_bed(reg_elements, path):
