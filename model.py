@@ -6,71 +6,64 @@ from tensorflow.keras.layers import Dense
 from tensorflow.keras.layers import Reshape
 from tensorflow.keras.layers import Dropout
 from tensorflow.keras.layers import Input
+from tensorflow.keras.layers import Conv1D
+from tensorflow.keras.layers import BatchNormalization
+from tensorflow.keras.layers import Activation
 from tensorflow.keras.models import Model
-import keras
-from keras import layers
-from keras.layers import Dense, Conv1D, BatchNormalization, Activation
-from keras.regularizers import l2
-from keras.layers import AveragePooling1D, Input, Flatten
-from keras.callbacks import ModelCheckpoint, LearningRateScheduler
-from keras.callbacks import ReduceLROnPlateau
+from tensorflow.keras.layers import Add
+from tensorflow.keras.regularizers import L2
+from tensorflow.keras import layers
+
 import tensorflow as tf
 import numpy as np
-import time
-import attention
-import transformer_layers as tl
-from scipy import stats
-import keras_transformer as kt
-from keras import backend as K
 
 # tf.compat.v1.disable_eager_execution()
 
-projection_dim = 128
-num_heads = 8
+projection_dim = 64
+num_heads = 4
 transformer_units = [
     projection_dim * 2,
     projection_dim,
 ]
-transformer_layers = 8
+transformer_layers = 4
 
 def simple_model(input_size, num_regions, cell_num):
     input_shape = (input_size, 4)
-    inputs = Input(shape=input_shape)
-    x = inputs
-    x = Dropout(0.3, input_shape=(None, input_size, 4))(x)
+    inputs = Input(shape=input_shape, name="input_dna_sequences")
+    x = Dropout(0.3, input_shape=(None, input_size, 4), name="dropout_input")(inputs)
     x = resnet_v2(x, 11)
     num_patches = 785
-    x = Dropout(0.3, input_shape=(None, num_patches, 1597))(x)
+    x = Dropout(0.3, input_shape=(None, num_patches, 912), name="dropout_resnet")(x)
 
     # Encode patches.
     encoded_patches = PatchEncoder(num_patches, projection_dim)(x)
 
     # Create multiple layers of the Transformer block.
-    for _ in range(transformer_layers):
+    for tl in range(transformer_layers):
         # Layer normalization 1.
-        x1 = layers.LayerNormalization(epsilon=1e-6)(encoded_patches)
+        x1 = layers.LayerNormalization(epsilon=1e-6, name="lanorm_1_" + str(tl))(encoded_patches)
         # Create a multi-head attention layer.
         attention_output = layers.MultiHeadAttention(
-            num_heads=num_heads, key_dim=projection_dim, dropout=0.1
+            num_heads=num_heads, key_dim=projection_dim, dropout=0.1, name="mha_" + str(tl)
         )(x1, x1)
         # Skip connection 1.
-        x2 = layers.Add()([attention_output, encoded_patches])
+        x2 = layers.Add(name="add_1_tl_" + str(tl))([attention_output, encoded_patches])
         # Layer normalization 2.
-        x3 = layers.LayerNormalization(epsilon=1e-6)(x2)
+        x3 = layers.LayerNormalization(epsilon=1e-6, name="lanorm_2_" + str(tl))(x2)
         # MLP.
-        x3 = mlp(x3, hidden_units=transformer_units, dropout_rate=0.1)
+        x3 = mlp(x3, hidden_units=transformer_units, dropout_rate=0.1, name="mlp_"+str(tl))
         # Skip connection 2.
-        encoded_patches = layers.Add()([x3, x2])
+        encoded_patches = layers.Add(name="add_2_tl_" + str(tl))([x3, x2])
 
     # Create a [batch_size, projection_dim] tensor.
-    representation = layers.LayerNormalization(epsilon=1e-6)(encoded_patches)
-    representation = layers.Flatten()(representation)
-    representation = layers.Dropout(0.5)(representation)
+    representation = layers.LayerNormalization(epsilon=1e-6, name="lanorm_3")(encoded_patches)
+    representation = layers.Flatten(name="flatten_rep")(representation)
+    representation = layers.Dropout(0.5, name="dropout_rep")(representation)
 
-    x = Dense(cell_num * num_regions)(representation)
-    x = LeakyReLU(alpha=0.2)(x)
-    outputs = Reshape((cell_num, num_regions))(x)
-    model = Model(inputs, outputs, name="model")
+    x = Dense(cell_num * num_regions, name="dense_output")(representation)
+    x = LeakyReLU(alpha=0.2, name="leaky_output")(x)
+    outputs = Reshape((cell_num, num_regions), name="reshape_output")(x)
+    model = Model(inputs=inputs, outputs=outputs, name="expression_model")
     return model
 
 
@@ -80,7 +73,8 @@ def resnet_layer(inputs,
                  strides=1,
                  activation='relu',
                  batch_normalization=True,
-                 conv_first=True):
+                 conv_first=True,
+                 name="_"):
     """2D Convolution-Batch Normalization-Activation stack builder
 
     # Arguments
@@ -100,21 +94,22 @@ def resnet_layer(inputs,
                   kernel_size=kernel_size,
                   strides=strides,
                   padding='same',
-                  kernel_regularizer=l2(1e-6),
-                  activity_regularizer=l2(1e-6))
+                  kernel_regularizer=L2(1e-6),
+                  activity_regularizer=L2(1e-6),
+                  name=name+"conv1d_1")
 
     x = inputs
     if conv_first:
         x = conv(x)
         if batch_normalization:
-            x = BatchNormalization()(x)
+            x = BatchNormalization(name=name+"bn")(x)
         if activation is not None:
-            x = Activation(activation)(x)
+            x = Activation(activation, name=name+"activation")(x)
     else:
         if batch_normalization:
-            x = BatchNormalization()(x)
+            x = BatchNormalization(name=name+"bn")(x)
         if activation is not None:
-            x = Activation(activation)(x)
+            x = Activation(activation, name=name+"activation")(x)
         x = conv(x)
     return x
 
@@ -153,7 +148,7 @@ def resnet_v2(input_x, depth):
     # v2 performs Conv2D with BN-ReLU on input before splitting into 2 paths
     x = resnet_layer(inputs=input_x,
                      num_filters=num_filters_in,
-                     conv_first=True)
+                     conv_first=True, name="first_rl_")
 
     # Instantiate the stack of residual units
     for stage in range(8):
@@ -167,10 +162,10 @@ def resnet_v2(input_x, depth):
                     activation = None
                     batch_normalization = False
             else:
-                num_filters_out = int(num_filters_in * 1.3) # changed from 2
+                num_filters_out = int(num_filters_in * 1.2) # changed from 2
                 if res_block == 0:  # first layer but not first stage
                     strides = 2    # downsample
-
+            name_id = str(stage) + "_" + str(res_block)
             # bottleneck residual unit
             y = resnet_layer(inputs=x,
                              num_filters=num_filters_in,
@@ -178,14 +173,14 @@ def resnet_v2(input_x, depth):
                              strides=strides,
                              activation=activation,
                              batch_normalization=batch_normalization,
-                             conv_first=False)
+                             conv_first=False, name=name_id + "_second_rl_")
             y = resnet_layer(inputs=y,
                              num_filters=num_filters_in,
-                             conv_first=False)
+                             conv_first=False, name=name_id + "_third_rl_")
             y = resnet_layer(inputs=y,
                              num_filters=num_filters_out,
                              kernel_size=1,
-                             conv_first=False)
+                             conv_first=False, name=name_id + "_fourth_rl_")
             if res_block == 0:
                 # linear projection residual shortcut connection to match
                 # changed dims
@@ -194,27 +189,27 @@ def resnet_v2(input_x, depth):
                                  kernel_size=1,
                                  strides=strides,
                                  activation=None,
-                                 batch_normalization=False)
-            x = keras.layers.add([x, y], name="add_res_" + str(stage) + "_" + str(res_block))
+                                 batch_normalization=False, name=name_id + "_fifths_rl_")
+            x = Add(name="add_res_" + name_id)([x, y])
 
         num_filters_in = num_filters_out
 
     # Add classifier on top.
     # v2 has BN-ReLU before Pooling
-    x = BatchNormalization()(x)
-    x = Activation('relu')(x)
+    x = BatchNormalization(name="resnet_last_bn")(x)
+    x = Activation('relu', name="resnet_last_activation")(x)
     # x = AveragePooling1D(pool_size=8)(x)
 
     return x
 
 
-def get_callbacks():
-    lr_scheduler = LearningRateScheduler(lr_schedule)
-    lr_reducer = ReduceLROnPlateau(factor=np.sqrt(0.1),
-                                   cooldown=0,
-                                   patience=5,
-                                   min_lr=0.5e-6)
-    return [lr_reducer, lr_scheduler]
+# def get_callbacks():
+#     lr_scheduler = LearningRateScheduler(lr_schedule)
+#     lr_reducer = ReduceLROnPlateau(factor=np.sqrt(0.1),
+#                                    cooldown=0,
+#                                    patience=5,
+#                                    min_lr=0.5e-6)
+#     return [lr_reducer, lr_scheduler]
 
 
 def lr_schedule(epoch):
@@ -242,10 +237,10 @@ def lr_schedule(epoch):
     return lr
 
 
-def mlp(x, hidden_units, dropout_rate):
-    for units in hidden_units:
-        x = layers.Dense(units, activation=tf.nn.gelu)(x)
-        x = layers.Dropout(dropout_rate)(x)
+def mlp(x, hidden_units, dropout_rate, name):
+    for u, units in enumerate(hidden_units):
+        x = layers.Dense(units, activation=tf.nn.gelu, name=name + "_dense_" + str(u))(x)
+        x = layers.Dropout(dropout_rate, name=name + "_dropout_" + str(u))(x)
     return x
 
 

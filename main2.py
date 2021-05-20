@@ -1,14 +1,11 @@
 import math
 import os
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-# os.environ["CUDA_VISIBLE_DEVICES"] = '2'
+os.environ["CUDA_VISIBLE_DEVICES"] = '0'
 import random
 import pandas as pd
-import attention
-import model
 import model as m
 import numpy as np
-import tensorflow as tf
 import common as cm
 from pathlib import Path
 import pickle
@@ -16,10 +13,9 @@ from tensorflow.keras.optimizers import Adam
 from scipy import stats
 import matplotlib
 import matplotlib.pyplot as plt
-from heapq import nsmallest
-from tensorflow import keras
 import copy
 import seaborn as sns
+import tensorflow as tf
 matplotlib.use("agg")
 # tf.compat.v1.disable_eager_execution()
 
@@ -27,7 +23,9 @@ def train():
     # implement cropping. only half of the input for binning
     # Apply smoothing to output bins? Ask Hon how to do it best
     # transformer_layers = 8 Try 1 instead of 8
-    # remove last mlp to get 0.6
+    model_folder = "model1"
+    model_name = "expression_model_1"
+    figures_folder = "figures_1"
     input_size = 100400
     half_size = input_size / 2
     max_shift = 10
@@ -86,33 +84,40 @@ def train():
         test_input_sequences = pickle.load(open("test_input_sequences.p", "rb"))
         test_output = pickle.load(open("test_output.p", "rb"))
         test_class = pickle.load(open("test_class.p", "rb"))
+        test_info = pickle.load(open("test_info.p", "rb"))
     else:
         gas = {}
         for cell in cells:
             gas[cell] = copy.deepcopy(ga)
-
+        over = 0
         for chr in good_chr:
             for p in promoters[chr] + enhancers[chr]:
                 for cell in cells:
                     pos = int(p[0] / bin_size)
+                    if gas[cell][chr][pos] != 0:
+                        over += 1
                     gas[cell][chr][pos] += counts[cell][p[1]]
-                    if pos - 1 > 0:
-                        gas[cell][chr][pos - 1] += counts[cell][p[1]]
-                    if pos + 1 < num_regions:
-                        gas[cell][chr][pos + 1] += counts[cell][p[1]]
+                    # if pos - 1 > 0:
+                    #     gas[cell][chr][pos - 1] += counts[cell][p[1]]
+                    # if pos + 1 < num_regions:
+                    #     gas[cell][chr][pos + 1] += counts[cell][p[1]]
 
         for chr in ["chr1"]:
             for p in test_promoters[chr] + test_enhancers[chr]:
                 for cell in cells:
                     pos = int(p[0] / bin_size)
+                    if gas[cell][chr][pos] != 0:
+                        over += 1
                     gas[cell][chr][pos] += counts[cell][p[1]]
-                    if pos - 1 > 0:
-                        gas[cell][chr][pos - 1] += counts[cell][p[1]]
-                    if pos + 1 < num_regions:
-                        gas[cell][chr][pos + 1] += counts[cell][p[1]]
+                    # if pos - 1 > 0:
+                    #     gas[cell][chr][pos - 1] += counts[cell][p[1]]
+                    # if pos + 1 < num_regions:
+                    #     gas[cell][chr][pos + 1] += counts[cell][p[1]]
+        print("Over" + str(over))
         test_input_sequences = []
         test_output = []
         test_class = []
+        test_info = []
         for chr, chr_cres in test_promoters.items():
             for i in range(len(chr_cres)):
                 tss = chr_cres[i][0]
@@ -129,6 +134,7 @@ def train():
                     test_class.append(1)
                 else:
                     test_class.append(0)
+                test_info.append(chr_cres[i][1])
 
         test_input_sequences = np.asarray(test_input_sequences)
         test_output = np.asarray(test_output)
@@ -155,21 +161,19 @@ def train():
         pickle.dump(test_input_sequences, open("test_input_sequences.p", "wb"), protocol=pickle.HIGHEST_PROTOCOL)
         pickle.dump(test_output, open("test_output.p", "wb"), protocol=pickle.HIGHEST_PROTOCOL)
         pickle.dump(test_class, open("test_class.p", "wb"), protocol=pickle.HIGHEST_PROTOCOL)
-
-    model_folder = "model1"
-    model_name = "resnet.h5"
-
-    if os.path.exists(model_folder) and os.path.isdir(model_folder) and os.listdir(model_folder):
-        # our_model.load_weights(model_folder + "/" + model_name)
-        print("")
-    else:
-        Path(model_folder).mkdir(parents=True, exist_ok=True)
+        pickle.dump(test_info, open("test_info.p", "wb"), protocol=pickle.HIGHEST_PROTOCOL)
 
     # strategy = tf.distribute.MirroredStrategy()
     # print('Number of devices: {}'.format(strategy.num_replicas_in_sync))
     # with strategy.scope():
     our_model = m.simple_model(input_size, num_regions, num_cells)
-    our_model.compile(loss="mse", optimizer=Adam(lr=0.0001))
+    if os.path.exists(model_folder) and os.path.isdir(model_folder) and os.listdir(model_folder):
+        # our_model = tf.keras.models.load_model(model_folder + "/" + model_name)
+        print("")
+    else:
+        Path(model_folder).mkdir(parents=True, exist_ok=True)
+    our_model.compile(loss="mse", optimizer=Adam(learning_rate=0.00004))
+
     BATCH_SIZE = 8
     for k in range(150):
         input_sequences = []
@@ -180,9 +184,9 @@ def train():
             # new_arr = ns.reshape((ns.shape[0], -1))
             input_sequences.append(ns)
         input_sequences = np.asarray(input_sequences)
-
+        # if k != 0:
         our_model.fit(input_sequences, output_scores, epochs=1, batch_size=BATCH_SIZE)
-        our_model.save_weights(model_folder + "/" + model_name)
+        our_model.save(model_folder + "/" + model_name)
         print("Epoch " + str(k))
         print("Training set")
         predictions = our_model.predict(input_sequences[0:3000], batch_size=BATCH_SIZE)
@@ -196,7 +200,7 @@ def train():
                 #     continue
                 a.append(predictions[i][c][mid_bin])
                 b.append(output_scores[i][c][mid_bin])
-            corr = stats.spearmanr(a, b)[0]
+            corr = stats.pearsonr(a, b)[0]
             print("Correlation " + cell + ": " + str(corr))
         print("Test set")
         predictions = our_model.predict(test_input_sequences, batch_size=BATCH_SIZE)
@@ -220,46 +224,47 @@ def train():
             corr = stats.pearsonr(ap, bp)[0]
             print("Correlation coding " + cell + ": " + str(corr) + " [" + str(len(ap)) + "]")
 
-        for i in range(200, 300, 1):
-            fig, axs = plt.subplots(2, 1, figsize=(12, 8))
-            vector1 = predictions[i][1]
-            vector2 = test_output[i][1]
-            x = range(num_regions)
-            d1 = {'bin': x, 'expression': vector1}
-            df1 = pd.DataFrame(d1)
-            d2 = {'bin': x, 'expression': vector2}
-            df2 = pd.DataFrame(d2)
-            sns.lineplot(data=df1, x='bin', y='expression', ax=axs[0])
-            axs[0].set_title("Prediction")
-            sns.lineplot(data=df2, x='bin', y='expression', ax=axs[1])
-            axs[1].set_title("Ground truth")
-            fig.tight_layout()
-            plt.savefig("figures/track_" + str(i + 1) + ".png")
-            plt.close(fig)
+        for c, cell in enumerate(cells):
+            for i in range(1200, 1600, 1):
+                fig, axs = plt.subplots(2, 1, figsize=(12, 8))
+                vector1 = predictions[i][1]
+                vector2 = test_output[i][1]
+                x = range(num_regions)
+                d1 = {'bin': x, 'expression': vector1}
+                df1 = pd.DataFrame(d1)
+                d2 = {'bin': x, 'expression': vector2}
+                df2 = pd.DataFrame(d2)
+                sns.lineplot(data=df1, x='bin', y='expression', ax=axs[0])
+                axs[0].set_title("Prediction")
+                sns.lineplot(data=df2, x='bin', y='expression', ax=axs[1])
+                axs[1].set_title("Ground truth")
+                fig.tight_layout()
+                plt.savefig(figures_folder + "/track_" + str(i + 1) + "_" + str(cell) + "_" + test_info[i] + ".png")
+                plt.close(fig)
 
         # Gene regplot
+        for c, cell in enumerate(cells):
+            a = []
+            b = []
+            for i in range(len(predictions)):
+                if test_class[i] == 0:
+                    continue
+                a.append(predictions[i][c][mid_bin])
+                b.append(test_output[i][c][mid_bin])
 
-        a = []
-        b = []
-        for i in range(len(predictions)):
-            if test_class[i] == 0:
-                continue
-            a.append(predictions[i][1][mid_bin])
-            b.append(test_output[i][1][mid_bin])
+            pickle.dump(a, open(figures_folder + "/" + str(cell) + "_a" + str(k) + ".p", "wb"), protocol=pickle.HIGHEST_PROTOCOL)
+            pickle.dump(b, open(figures_folder + "/" + str(cell) + "_b" + str(k) + ".p", "wb"), protocol=pickle.HIGHEST_PROTOCOL)
 
-        pickle.dump(a, open("a.p", "wb"), protocol=pickle.HIGHEST_PROTOCOL)
-        pickle.dump(b, open("b.p", "wb"), protocol=pickle.HIGHEST_PROTOCOL)
+            fig, ax = plt.subplots(figsize=(6, 6))
+            r, p = stats.pearsonr(a, b)
 
-        fig, ax = plt.subplots(figsize=(6, 6))
-        r, p = stats.pearsonr(a, b)
+            sns.regplot(x=a, y=b,
+                        ci=None, label="r = {0:.2f}; p = {1:.2e}".format(r, p)).legend(loc="best")
 
-        sns.regplot(x=a, y=b,
-                    ci=None, label="r = {0:.2f}; p = {1:.2e}".format(r, p)).legend(loc="best")
-
-        ax.set(xlabel='Predicted', ylabel='Ground truth')
-        plt.title("Gene expression prediction")
-        fig.tight_layout()
-        plt.savefig("figures/corr" + str(k) + ".svg")
+            ax.set(xlabel='Predicted', ylabel='Ground truth')
+            plt.title("Gene expression prediction")
+            fig.tight_layout()
+            plt.savefig(figures_folder + "/corr_" + str(k) + "_" + str(cell) + ".svg")
 
 
 # def read_ranges_1(file_path, good_chr):
