@@ -49,7 +49,7 @@ def train():
     strategy = tf.distribute.experimental.MultiWorkerMirroredStrategy()
     print('Number of devices: {}'.format(strategy.num_replicas_in_sync))
     GLOBAL_BATCH_SIZE = BATCH_SIZE * strategy.num_replicas_in_sync
-    STEPS_PER_EPOCH = 2000
+    STEPS_PER_EPOCH = 3000
     out_stack_num = 1000
     num_epochs = 10000
 
@@ -310,11 +310,14 @@ def train():
     #         # df["score"] = df["score"] / df["score"].max()
     #         df.drop(['readCount', 'qvalue', 'pvalue'], axis=1, inplace=True)
     #         # df.to_csv("parsed_hic/" + t_name,index=False,compression="gzip")
-    #         hic_data[t_name] = df
+    #         chrd = list(df["locus1_chrom"].unique())
+    #         for chr in chrd:
+    #             hic_data[t_name + chr] = df.loc[df['locus1_chrom'] == chr].sort_values(by=['locus1_start'])
+    #         print(t_name)
     # joblib.dump(hic_data, "pickle/hic_data.gz", compress=3)
     # joblib.dump(hic_keys, "pickle/hic_keys.gz", compress=3)
-    # hic_data = joblib.load("pickle/hic_data.gz")
-    # hic_keys = joblib.load("pickle/hic_keys.gz")
+    hic_data = joblib.load("pickle/hic_data.gz")
+    hic_keys = joblib.load("pickle/hic_keys.gz")
     print("Number of tracks: " + str(len(gas_keys)))
     with strategy.scope():
         if Path(model_folder + "/" + model_name).is_file():
@@ -357,7 +360,7 @@ def train():
         input_sequences = []
         output_scores = []
         print("Preparing sequences" + datetime.now().strftime(' %H:%M:%S'))
-        chosen_tracks = random.sample(gas_keys, out_stack_num - len(cells) )# - len(hic_keys))
+        chosen_tracks = random.sample(gas_keys, out_stack_num - len(cells) - len(hic_keys))# - len(hic_keys))
         chip_picks = 0
         for it, ct in enumerate(chosen_tracks):
             if ct.startswith("chip_"):
@@ -375,6 +378,9 @@ def train():
         for i, seq in enumerate(input_sequences_long):
             if i >= GLOBAL_BATCH_SIZE * STEPS_PER_EPOCH:
                 break
+            if i % 100 == 0:
+                print(i, end=" ")
+                gc.collect()
             try:
                 rand_var = random.randint(0, max_shift)
                 # rand_var = 5
@@ -384,21 +390,26 @@ def train():
                 scores = []
                 for key in chosen_tracks:
                     scores.append(gas[key][info[0]][start: start + num_regions])
-                # for key in hic_keys:
-                #     hic_mat = np.zeros((10, 10))
-                #     hd = hic_data[key].loc[hic_data[key]['locus1_chrom'] == info[0]]
-                #     start = int((info[1] + (rand_var - max_shift / 2) - half_size))
-                #     start = start - start % 10000
-                #     end = start + input_size
-                #     hd = hd[hd['locus1_start'].between(start, end)]
-                #     for index, row in hd.iterrows():
-                #         l1 = int((row["locus1_start"] - start) / 10000)
-                #         l2 = int((row["locus2_start"] - start) / 10000)
-                #         if l2 >= len(hic_mat):
-                #             continue
-                #         hic_mat[l1, l2] = row["score"]
-                #         hic_mat[l2, l1] = row["score"]
-                #     scores.append(hic_mat.flatten())
+                for key in hic_keys:
+                    hic_mat = np.zeros((10, 10))
+                    # hd = hic_data[key].loc[hic_data[key]['locus1_chrom'] == info[0]]
+                    hd = hic_data[key + info[0]]
+                    start_hic = int((info[1] + (rand_var - max_shift / 2) - half_size))
+                    end_hic = start_hic + input_size
+                    start_hic = start_hic - start_hic % 10000
+                    start_row = hd['locus1_start'].searchsorted(start_hic, side='left')
+                    end_row = hd['locus1_start'].searchsorted(end_hic, side='right')
+                    hd = hd.iloc[start_row:end_row]
+                    l1 = ((hd["locus1_start"].values - start_hic) / 10000).astype(int)
+                    l2 = ((hd["locus2_start"].values - start_hic) / 10000).astype(int)
+                    lix = l2 < len(hic_mat)
+                    l1 = l1[lix]
+                    l2 = l2[lix]
+                    hic_mat[l1, l2] += 1 # row["score"]
+                    hic_mat = hic_mat + hic_mat.T - np.diag(np.diag(hic_mat))
+                    if len(hic_mat.flatten()) != 100:
+                        print("ooooooooops   ")
+                    scores.append(hic_mat.flatten().astype(np.float32))
                 for cell in cells:
                     scores.append(gas[cell][info[0]][start: start + num_regions])
                 input_sequences.append(ns)
@@ -406,7 +417,7 @@ def train():
             except Exception as e:
                 print(e)
                 err += 1
-        print("Problems: " + str(err) + datetime.now().strftime(' %H:%M:%S'))
+        print("\nProblems: " + str(err) + datetime.now().strftime(' %H:%M:%S'))
         output_scores = np.asarray(output_scores)
         input_sequences = np.asarray(input_sequences)
 
@@ -501,21 +512,26 @@ def train():
                         break
                 if pic_count > 10:
                     break
-            # for h in range(len(hic_keys)):
-            #     it = len(chosen_tracks) + h
-            #     for i in range(len(predictions)):
-            #         if np.sum(output_scores[i][it]) == 0:
-            #             continue
-            #         mat_gt = np.reshape(output_scores[i][it], (10,10))
-            #         mat_pred = np.reshape(predictions[i][it], (10,10))
-            #         fig, axs = plt.subplots(2, 1, figsize=(12, 8))
-            #         sns.heatmap(mat_pred, linewidth=0.0, ax=axs[0])
-            #         axs[0].set_title("Prediction")
-            #         sns.heatmap(mat_gt, linewidth=0.0, ax=axs[1])
-            #         axs[1].set_title("Ground truth")
-            #         plt.tight_layout()
-            #         plt.savefig(figures_folder + "/hic/track_" + str(i + 1) + "_" + str(hic_keys[h]) + ".png")
-            #         plt.close(fig)
+
+            for h in range(len(hic_keys)):
+                pic_count = 0
+                it = len(chosen_tracks) + h
+                for i in range(500, 800, 1):
+                    if np.sum(output_scores[i][it]) == 0:
+                        continue
+                    mat_gt = np.reshape(output_scores[i][it], (10,10))
+                    mat_pred = np.reshape(predictions[i][it], (10,10))
+                    fig, axs = plt.subplots(2, 1, figsize=(8, 8))
+                    sns.heatmap(mat_pred, linewidth=0.0, ax=axs[0])
+                    axs[0].set_title("Prediction")
+                    sns.heatmap(mat_gt, linewidth=0.0, ax=axs[1])
+                    axs[1].set_title("Ground truth")
+                    plt.tight_layout()
+                    plt.savefig(figures_folder + "/hic/track_" + str(i + 1) + "_" + str(hic_keys[h]) + ".png")
+                    plt.close(fig)
+                    pic_count += 1
+                    if pic_count > 4:
+                        break
 
 
             print("Test set")
