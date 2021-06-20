@@ -29,6 +29,8 @@ import copy
 import seaborn as sns
 import skimage.measure
 import time
+from liftover import get_lifter
+converter = get_lifter('hg38', 'hg19')
 from datetime import datetime
 matplotlib.use("agg")
 
@@ -41,7 +43,7 @@ def train():
     figures_folder = "figures_1"
     input_size = 100000
     half_size = input_size / 2
-    max_shift = 20
+    max_shift = 10000
     bin_size = 1000
     num_regions = int(input_size / bin_size)
     mid_bin = math.floor(num_regions / 2)
@@ -49,9 +51,10 @@ def train():
     strategy = tf.distribute.experimental.MultiWorkerMirroredStrategy()
     print('Number of devices: {}'.format(strategy.num_replicas_in_sync))
     GLOBAL_BATCH_SIZE = BATCH_SIZE * strategy.num_replicas_in_sync
-    STEPS_PER_EPOCH = 3000
+    STEPS_PER_EPOCH = 5000
     out_stack_num = 1000
     num_epochs = 10000
+    test_chr = "chr1"
 
     Path(figures_folder + "/" + "attribution").mkdir(parents=True, exist_ok=True)
     Path(figures_folder + "/" + "tracks").mkdir(parents=True, exist_ok=True)
@@ -89,7 +92,7 @@ def train():
         # gas_keys.remove("IPSC")
         # gas_keys.remove("DMFB")
         # joblib.dump(gas_keys, "pickle/keys.gz", compress=3)
-        gas_keys = joblib.load("pickle/keys.gz")
+
         output_info = pickle.load(open("pickle/output_info.p", "rb"))
         counts = pickle.load(open("pickle/counts.p", "rb"))
         cells = list(sorted(counts.keys()))
@@ -176,7 +179,7 @@ def train():
                     test_class.append(1)
                 else:
                     test_class.append(0)
-                test_info.append(chr_cres[i][1])
+                test_info.append([chr, tss, chr_cres[i][1]])
 
         test_input_sequences = np.asarray(test_input_sequences)
         test_output = np.asarray(test_output)
@@ -190,7 +193,7 @@ def train():
                 if len(seq) != input_size + max_shift:
                     continue
                 input_sequences_long.append(seq)
-                output_info.append([chr, tss])
+                output_info.append([chr, tss, chr_cres[i][1]])
 
         input_sequences_long = np.asarray(input_sequences_long)
         print("Training set completed")
@@ -204,6 +207,7 @@ def train():
         del gas
         gc.collect()
 
+    gas_keys = joblib.load("pickle/keys.gz")
     # gas_keys = []
     # directory = "tracks"
     # for filename in os.listdir(directory):
@@ -294,6 +298,14 @@ def train():
     # hic_keys = []
     # directory = "hic"
     # hic_data = {}
+    #
+    # def replace(chrn, pos):
+    #     a = converter[chrn][pos]
+    #     if len(a) > 0 and len(a[0]) > 0:
+    #         return a[0][1]
+    #     else:
+    #         return -1
+    #
     # for filename in os.listdir(directory):
     #     if filename.endswith(".gz"):
     #         fn = os.path.join(directory, filename)
@@ -301,24 +313,74 @@ def train():
     #         hic_keys.append(t_name)
     #         df = pd.read_csv(fn, sep="\t", index_col=False)
     #         df.drop(['relCoverage1', 'relCoverage2', 'relCoverage1',
-    #                  'probability', 'expected', 'logObservedOverExpected',
+    #                  'probability', 'expected',
     #                  "locus2_chrom", "locus1_end", "locus2_end"], axis=1, inplace=True)
     #         df.drop(df[df.readCount < 5].index, inplace=True)
     #         df.drop(df[df.qvalue > 0.05].index, inplace=True)
-    #         df["score"] = 1.0
-    #         # df["score"] = -1 * np.log(df["pvalue"])
-    #         # df["score"] = df["score"] / df["score"].max()
-    #         df.drop(['readCount', 'qvalue', 'pvalue'], axis=1, inplace=True)
-    #         # df.to_csv("parsed_hic/" + t_name,index=False,compression="gzip")
+    #         hic_max = df["logObservedOverExpected"].max()
+    #         df["score"] = df["logObservedOverExpected"] / df["logObservedOverExpected"].max()
+    #         df.drop(['readCount', 'qvalue', 'pvalue', "logObservedOverExpected"], axis=1, inplace=True)
     #         chrd = list(df["locus1_chrom"].unique())
+    #         df['locus1_start'] = df.apply(lambda row: replace(row['locus1_chrom'], row['locus1_start']), axis=1)
+    #         df['locus2_start'] = df.apply(lambda row: replace(row['locus1_chrom'], row['locus2_start']), axis=1)
+    #         print(df.shape[0])
+    #         df.drop(df[df.locus1_start == -1].index, inplace=True)
+    #         df.drop(df[df.locus2_start == -1].index, inplace=True)
+    #         print(df.shape[0])
     #         for chr in chrd:
     #             hic_data[t_name + chr] = df.loc[df['locus1_chrom'] == chr].sort_values(by=['locus1_start'])
-    #         print(t_name)
+    #         print(t_name + " " + str(hic_max))
     # joblib.dump(hic_data, "pickle/hic_data.gz", compress=3)
     # joblib.dump(hic_keys, "pickle/hic_keys.gz", compress=3)
-    hic_data = joblib.load("pickle/hic_data.gz")
-    hic_keys = joblib.load("pickle/hic_keys.gz")
+    # hic_data = joblib.load("pickle/hic_data.gz")
+    # hic_keys = joblib.load("pickle/hic_keys.gz")
     print("Number of tracks: " + str(len(gas_keys)))
+    # for i in range(2000, 2200, 1):
+    #     if i >= GLOBAL_BATCH_SIZE * STEPS_PER_EPOCH:
+    #         break
+    #     if i % 100 == 0:
+    #         print(i, end=" ")
+    #         gc.collect()
+    #     try:
+    #         rand_var = random.randint(0, max_shift)
+    #         # rand_var = 5
+    #         # ns = seq[rand_var: rand_var + input_size, :]
+    #         info = output_info[i]
+    #         start = int((info[1] + (rand_var - max_shift / 2) - half_size) / bin_size)
+    #         scores = []
+    #         for key in hic_keys:
+    #             hic_mat = np.zeros((100, 100))
+    #             # hd = hic_data[key].loc[hic_data[key]['locus1_chrom'] == info[0]]
+    #             hd = hic_data[key + info[0]]
+    #             start_hic = int((info[1] + (rand_var - max_shift / 2) - half_size))
+    #             end_hic = start_hic + 1000000
+    #             start_row = hd['locus1_start'].searchsorted(start_hic - 10000, side='left')
+    #             end_row = hd['locus1_start'].searchsorted(end_hic, side='right')
+    #             hd = hd.iloc[start_row:end_row]
+    #             # convert start of the input region to the bin number
+    #             start_hic = int(start_hic / 10000)
+    #             # subtract start bin from the binned entries in the range [start_row : end_row]
+    #             l1 = (np.floor(hd["locus1_start"].values / 10000) - start_hic).astype(int)
+    #             l2 = (np.floor(hd["locus2_start"].values / 10000) - start_hic).astype(int)
+    #             hic_score = hd["score"].values
+    #             # drop contacts with regions outside the [start_row : end_row] range
+    #             lix = (l2 < len(hic_mat)) & (l2 >= 0) & (l1 >= 0)
+    #             l1 = l1[lix]
+    #             l2 = l2[lix]
+    #             hic_score = hic_score[lix]
+    #             hic_mat[l1, l2] += hic_score
+    #             hic_mat = hic_mat + hic_mat.T - np.diag(np.diag(hic_mat))
+    #             scores.append(hic_mat.flatten().astype(np.float32))
+    #
+    #             fig, axs = plt.subplots(1, 1, figsize=(8, 8))
+    #             sns.heatmap(hic_mat, linewidth=0.0, ax=axs)
+    #             axs.set_title("Ground truth")
+    #             plt.tight_layout()
+    #             plt.savefig(figures_folder + key + "_" + str(i) + ".png")
+    #             plt.close(fig)
+    #         exit()
+    #     except Exception as e:
+    #         print(e)
     with strategy.scope():
         if Path(model_folder + "/" + model_name).is_file():
             our_model = tf.keras.models.load_model(model_folder + "/" + model_name,
@@ -352,20 +414,20 @@ def train():
     del ga
     gc.collect()
     for k in range(num_epochs):
-        print("Epoch " + str(k) + datetime.now().strftime(' %H:%M:%S'))
+        print(datetime.now().strftime('[%H:%M:%S] ') + "Epoch " + str(k))
         if k > 0:
             with strategy.scope():
                 our_model = tf.keras.models.load_model(model_folder + "/" + model_name,
                                                        custom_objects={'PatchEncoder': mo.PatchEncoder})
         input_sequences = []
         output_scores = []
-        print("Preparing sequences" + datetime.now().strftime(' %H:%M:%S'))
-        chosen_tracks = random.sample(gas_keys, out_stack_num - len(cells) - len(hic_keys))# - len(hic_keys))
+        print(datetime.now().strftime('[%H:%M:%S] ') + "Preparing sequences")
+        chosen_tracks = random.sample(gas_keys, out_stack_num - len(cells)) # - len(hic_keys))
         chip_picks = 0
         for it, ct in enumerate(chosen_tracks):
             if ct.startswith("chip_"):
                 chip_picks += 1
-        print("Chip tracks: " + str(chip_picks) + datetime.now().strftime(' %H:%M:%S'))
+        print(datetime.now().strftime('[%H:%M:%S] ') + "Chip tracks: " + str(chip_picks))
         gas = {}
         for i, key in enumerate(chosen_tracks):
             our_model.get_layer("out_row_" + str(i)).set_weights(joblib.load(model_folder + "/" + key))
@@ -373,12 +435,12 @@ def train():
         for i, cell in enumerate(cells):
             # our_model.get_layer("out_row_" + str(-2 + i)).set_weights(joblib.load(model_folder + "/" + cell))
             gas[cell] = joblib.load("parsed_tracks/" + cell)
-        print("Loaded the tracks" + datetime.now().strftime(' %H:%M:%S'))
+        print(datetime.now().strftime('[%H:%M:%S] ') + "Loaded the tracks")
         err = 0
         for i, seq in enumerate(input_sequences_long):
             if i >= GLOBAL_BATCH_SIZE * STEPS_PER_EPOCH:
                 break
-            if i % 100 == 0:
+            if i % 500 == 0:
                 print(i, end=" ")
                 gc.collect()
             try:
@@ -390,26 +452,29 @@ def train():
                 scores = []
                 for key in chosen_tracks:
                     scores.append(gas[key][info[0]][start: start + num_regions])
-                for key in hic_keys:
-                    hic_mat = np.zeros((10, 10))
-                    # hd = hic_data[key].loc[hic_data[key]['locus1_chrom'] == info[0]]
-                    hd = hic_data[key + info[0]]
-                    start_hic = int((info[1] + (rand_var - max_shift / 2) - half_size))
-                    end_hic = start_hic + input_size
-                    start_hic = start_hic - start_hic % 10000
-                    start_row = hd['locus1_start'].searchsorted(start_hic, side='left')
-                    end_row = hd['locus1_start'].searchsorted(end_hic, side='right')
-                    hd = hd.iloc[start_row:end_row]
-                    l1 = ((hd["locus1_start"].values - start_hic) / 10000).astype(int)
-                    l2 = ((hd["locus2_start"].values - start_hic) / 10000).astype(int)
-                    lix = l2 < len(hic_mat)
-                    l1 = l1[lix]
-                    l2 = l2[lix]
-                    hic_mat[l1, l2] += 1 # row["score"]
-                    hic_mat = hic_mat + hic_mat.T - np.diag(np.diag(hic_mat))
-                    if len(hic_mat.flatten()) != 100:
-                        print("ooooooooops   ")
-                    scores.append(hic_mat.flatten().astype(np.float32))
+                # for key in hic_keys:
+                #     hic_mat = np.zeros((10, 10))
+                #     # hd = hic_data[key].loc[hic_data[key]['locus1_chrom'] == info[0]]
+                #     hd = hic_data[key + info[0]]
+                #     start_hic = int((info[1] + (rand_var - max_shift / 2) - half_size))
+                #     end_hic = start_hic + input_size
+                #     start_row = hd['locus1_start'].searchsorted(start_hic - 10000, side='left')
+                #     end_row = hd['locus1_start'].searchsorted(end_hic + 10000, side='right')
+                #     hd = hd.iloc[start_row:end_row]
+                #     # convert start of the input region to the bin number
+                #     start_hic = int(start_hic / 10000)
+                #     # subtract start bin from the binned entries in the range [start_row : end_row]
+                #     l1 = (hd["locus1_start"].values / 10000 - start_hic).astype(int)
+                #     l2 = (hd["locus2_start"].values / 10000 - start_hic).astype(int)
+                #     hic_score = hd["score"].values
+                #     # drop contacts with regions outside the [start_row : end_row] range
+                #     lix = (l2 < len(hic_mat)) & (l1 < len(hic_mat)) & (l2 >= 0) & (l1 >= 0)
+                #     l1 = l1[lix]
+                #     l2 = l2[lix]
+                #     hic_score = hic_score[lix]
+                #     hic_mat[l1, l2] += hic_score
+                #     hic_mat = hic_mat + hic_mat.T - np.diag(np.diag(hic_mat))
+                #     scores.append(hic_mat.flatten().astype(np.float32))
                 for cell in cells:
                     scores.append(gas[cell][info[0]][start: start + num_regions])
                 input_sequences.append(ns)
@@ -417,7 +482,21 @@ def train():
             except Exception as e:
                 print(e)
                 err += 1
-        print("\nProblems: " + str(err) + datetime.now().strftime(' %H:%M:%S'))
+
+        # preparing test output tracks
+        test_output = []
+        for i in range(len(test_info)):
+            scores = []
+            start = int((test_info[i][1] - half_size) / bin_size)
+            for key in chosen_tracks:
+                scores.append(gas[key][test_info[i][0]][start: start + num_regions])
+            for cell in cells:
+                scores.append(gas[cell][test_info[i][0]][start: start + num_regions])
+            test_output.append(scores)
+        test_output = np.asarray(test_output)
+
+        print("")
+        print(datetime.now().strftime('[%H:%M:%S] ') + "Problems: " + str(err))
         output_scores = np.asarray(output_scores)
         input_sequences = np.asarray(input_sequences)
 
@@ -429,7 +508,7 @@ def train():
         input_sequences = input_sequences[:GLOBAL_BATCH_SIZE * STEPS_PER_EPOCH]
         output_scores = output_scores[:GLOBAL_BATCH_SIZE * STEPS_PER_EPOCH]
 
-        print("Compiling model" + datetime.now().strftime(' %H:%M:%S'))
+        print(datetime.now().strftime('[%H:%M:%S] ') + "Compiling model")
         # if k < 300:
         #     lr = 0.0001
         # elif k < 600:
@@ -453,7 +532,7 @@ def train():
             our_model.compile(loss="mse", optimizer=Adam(learning_rate=lr))
 
         # if k != 0:
-        print("Training" + datetime.now().strftime(' %H:%M:%S'))
+        print(datetime.now().strftime('[%H:%M:%S] ') + "Training")
         try:
             our_model.fit(input_sequences, output_scores, epochs=fit_epochs, batch_size=GLOBAL_BATCH_SIZE)
             our_model.save(model_folder + "/" + model_name)
@@ -462,7 +541,7 @@ def train():
                             compress=3)
         except Exception as e:
             print(e)
-            print("Error while training. Loading previous model." + datetime.now().strftime(' %H:%M:%S'))
+            print(datetime.now().strftime('[%H:%M:%S] ') +  "Error while training. Loading previous model.")
             with strategy.scope():
                 our_model = tf.keras.models.load_model(model_folder + "/" + model_name,
                                                        custom_objects={'PatchEncoder': mo.PatchEncoder})
@@ -470,32 +549,32 @@ def train():
             del output_scores
             del predictions
             gc.collect()
+            continue
 
         if k % 10 == 0 : # and k != 0
-            print("Training set")
-            predictions = our_model.predict(input_sequences[0:1000], batch_size=GLOBAL_BATCH_SIZE)
+            print(datetime.now().strftime('[%H:%M:%S] ') + "Evaluating")
+            try:
+                print("Training set")
+                predictions = our_model.predict(input_sequences[0:1000], batch_size=GLOBAL_BATCH_SIZE)
 
-            for c, cell in enumerate(cells):
-                ci = -2 + c
-                a = []
-                b = []
-                for i in range(len(predictions)):
-                    # if output_scores[i][c][mid_bin] == 0:
-                    #     continue
-                    a.append(predictions[i][ci][mid_bin])
-                    b.append(output_scores[i][ci][mid_bin])
-                corr = stats.spearmanr(a, b)[0]
-                print("Correlation " + cell + ": " + str(corr))
-
-            pic_count = 0
-            for it, ct in enumerate(chosen_tracks):
-                if ct.startswith("chip_"):
+                for c, cell in enumerate(cells):
+                    ci = -2 + c
+                    a = []
+                    b = []
                     for i in range(len(predictions)):
-                        if np.sum(output_scores[i][it]) == 0:
-                            continue
+                        # if output_scores[i][c][mid_bin] == 0:
+                        #     continue
+                        a.append(predictions[i][ci][mid_bin])
+                        b.append(output_scores[i][ci][mid_bin])
+                    corr = stats.spearmanr(a, b)[0]
+                    print("Correlation " + cell + ": " + str(corr))
+
+                for c, cell in enumerate(cells):
+                    ci = -2 + c
+                    for i in range(0, 50, 1):
                         fig, axs = plt.subplots(2, 1, figsize=(12, 8))
-                        vector1 = predictions[i][it]
-                        vector2 = output_scores[i][it]
+                        vector1 = predictions[i][ci]
+                        vector2 = output_scores[i][ci]
                         x = range(num_regions)
                         d1 = {'bin': x, 'expression': vector1}
                         df1 = pd.DataFrame(d1)
@@ -506,148 +585,182 @@ def train():
                         sns.lineplot(data=df2, x='bin', y='expression', ax=axs[1])
                         axs[1].set_title("Ground truth")
                         fig.tight_layout()
-                        plt.savefig(figures_folder + "/chip/track_" + str(i + 1) + "_" + str(ct) + ".png")
+                        plt.savefig(figures_folder + "/tracks/training_track_" + str(i + 1) + "_" + str(cell) + ".png")
                         plt.close(fig)
-                        pic_count += 1
-                        break
-                if pic_count > 10:
-                    break
 
-            for h in range(len(hic_keys)):
+                print("chip")
                 pic_count = 0
-                it = len(chosen_tracks) + h
-                for i in range(500, 800, 1):
-                    if np.sum(output_scores[i][it]) == 0:
-                        continue
-                    mat_gt = np.reshape(output_scores[i][it], (10,10))
-                    mat_pred = np.reshape(predictions[i][it], (10,10))
-                    fig, axs = plt.subplots(2, 1, figsize=(8, 8))
-                    sns.heatmap(mat_pred, linewidth=0.0, ax=axs[0])
-                    axs[0].set_title("Prediction")
-                    sns.heatmap(mat_gt, linewidth=0.0, ax=axs[1])
-                    axs[1].set_title("Ground truth")
-                    plt.tight_layout()
-                    plt.savefig(figures_folder + "/hic/track_" + str(i + 1) + "_" + str(hic_keys[h]) + ".png")
-                    plt.close(fig)
-                    pic_count += 1
-                    if pic_count > 4:
+                for it, ct in enumerate(chosen_tracks):
+                    if ct.startswith("chip_"):
+                        for i in range(len(predictions)):
+                            if np.sum(output_scores[i][it]) == 0:
+                                continue
+                            fig, axs = plt.subplots(2, 1, figsize=(12, 8))
+                            vector1 = predictions[i][it]
+                            vector2 = output_scores[i][it]
+                            x = range(num_regions)
+                            d1 = {'bin': x, 'expression': vector1}
+                            df1 = pd.DataFrame(d1)
+                            d2 = {'bin': x, 'expression': vector2}
+                            df2 = pd.DataFrame(d2)
+                            sns.lineplot(data=df1, x='bin', y='expression', ax=axs[0])
+                            axs[0].set_title("Prediction")
+                            sns.lineplot(data=df2, x='bin', y='expression', ax=axs[1])
+                            axs[1].set_title("Ground truth")
+                            fig.tight_layout()
+                            plt.savefig(figures_folder + "/chip/track_" + str(i + 1) + "_" + str(ct) + ".png")
+                            plt.close(fig)
+                            pic_count += 1
+                            break
+                    if pic_count > 10:
+                        break
+                # print("hic")
+                # for h in range(len(hic_keys)):
+                #     pic_count = 0
+                #     it = len(chosen_tracks) + h
+                #     for i in range(len(predictions)):
+                #         if np.sum(output_scores[i][it]) == 0:
+                #             continue
+                #         mat_gt = np.reshape(output_scores[i][it], (10,10))
+                #         mat_pred = np.reshape(predictions[i][it], (10,10))
+                #         fig, axs = plt.subplots(2, 1, figsize=(8, 8))
+                #         sns.heatmap(mat_pred, linewidth=0.0, ax=axs[0])
+                #         axs[0].set_title("Prediction")
+                #         sns.heatmap(mat_gt, linewidth=0.0, ax=axs[1])
+                #         axs[1].set_title("Ground truth")
+                #         plt.tight_layout()
+                #         plt.savefig(figures_folder + "/hic/track_" + str(i + 1) + "_" + str(hic_keys[h]) + ".png")
+                #         plt.close(fig)
+                #         pic_count += 1
+                #         if pic_count > 4:
+                #             break
+
+
+                print("Test set")
+                predictions = our_model.predict(test_input_sequences, batch_size=GLOBAL_BATCH_SIZE)
+                for c, cell in enumerate(cells):
+                    ci = -2 + c
+                    a = []
+                    b = []
+                    ap = []
+                    bp = []
+                    for i in range(len(predictions)):
+                        # if test_output[i][c][mid_bin] == 0:
+                        #     continue
+                        a.append(predictions[i][ci][mid_bin])
+                        b.append(test_output[i][c][mid_bin])
+                        if test_class[i] == 0:
+                            continue
+                        ap.append(predictions[i][ci][mid_bin])
+                        bp.append(test_output[i][c][mid_bin])
+                    corr = stats.spearmanr(a, b)[0]
+                    print("Correlation " + cell + ": " + str(corr) + " [" + str(len(a)) + "]")
+                    corr = stats.spearmanr(ap, bp)[0]
+                    print("Correlation coding " + cell + ": " + str(corr) + " [" + str(len(ap)) + "]")
+
+                print("Drawing test set")
+                for c, cell in enumerate(cells):
+                    ci = -2 + c
+                    for i in range(1200, 1250, 1):
+                        fig, axs = plt.subplots(2, 1, figsize=(12, 8))
+                        vector1 = predictions[i][ci]
+                        vector2 = test_output[i][ci]
+                        x = range(num_regions)
+                        d1 = {'bin': x, 'expression': vector1}
+                        df1 = pd.DataFrame(d1)
+                        d2 = {'bin': x, 'expression': vector2}
+                        df2 = pd.DataFrame(d2)
+                        sns.lineplot(data=df1, x='bin', y='expression', ax=axs[0])
+                        axs[0].set_title("Prediction")
+                        sns.lineplot(data=df2, x='bin', y='expression', ax=axs[1])
+                        axs[1].set_title("Ground truth")
+                        fig.tight_layout()
+                        plt.savefig(figures_folder + "/tracks/test_track_" + str(i + 1) + "_" + str(cell) + "_" + test_info[i][2] + ".png")
+                        plt.close(fig)
+
+                print("chip")
+                pic_count = 0
+                for it, ct in enumerate(chosen_tracks):
+                    if ct.startswith("chip_"):
+                        for i in range(len(predictions)):
+                            if np.sum(output_scores[i][it]) == 0:
+                                continue
+                            fig, axs = plt.subplots(2, 1, figsize=(12, 8))
+                            vector1 = predictions[i][it]
+                            vector2 = test_output[i][it]
+                            x = range(num_regions)
+                            d1 = {'bin': x, 'expression': vector1}
+                            df1 = pd.DataFrame(d1)
+                            d2 = {'bin': x, 'expression': vector2}
+                            df2 = pd.DataFrame(d2)
+                            sns.lineplot(data=df1, x='bin', y='expression', ax=axs[0])
+                            axs[0].set_title("Prediction")
+                            sns.lineplot(data=df2, x='bin', y='expression', ax=axs[1])
+                            axs[1].set_title("Ground truth")
+                            fig.tight_layout()
+                            plt.savefig(figures_folder + "/chip/test_track_" + str(i + 1) + "_" + str(ct) + ".png")
+                            plt.close(fig)
+                            pic_count += 1
+                            break
+                    if pic_count > 10:
                         break
 
+                # Gene regplot
+                # for c, cell in enumerate(cells):
+                #     ci = -2 + c
+                #     a = []
+                #     b = []
+                #     for i in range(len(predictions)):
+                #         if test_class[i] == 0:
+                #             continue
+                #         a.append(predictions[i][ci][mid_bin])
+                #         b.append(test_output[i][ci][mid_bin])
+                #
+                #     pickle.dump(a, open(figures_folder + "/" + str(cell) + "_a" + str(k) + ".p", "wb"),
+                #                 protocol=pickle.HIGHEST_PROTOCOL)
+                #     pickle.dump(b, open(figures_folder + "/" + str(cell) + "_b" + str(k) + ".p", "wb"),
+                #                 protocol=pickle.HIGHEST_PROTOCOL)
+                #
+                #     fig, ax = plt.subplots(figsize=(6, 6))
+                #     r, p = stats.spearmanr(a, b)
+                #
+                #     sns.regplot(x=a, y=b,
+                #                 ci=None, label="r = {0:.2f}; p = {1:.2e}".format(r, p)).legend(loc="best")
+                #
+                #     ax.set(xlabel='Predicted', ylabel='Ground truth')
+                #     plt.title("Gene expression prediction")
+                #     fig.tight_layout()
+                #     plt.savefig(figures_folder + "/corr_" + str(k) + "_" + str(cell) + ".svg")
+                #     plt.close(fig)
 
-            print("Test set")
-            predictions = our_model.predict(test_input_sequences, batch_size=GLOBAL_BATCH_SIZE)
-            for c, cell in enumerate(cells):
-                ci = -2 + c
-                a = []
-                b = []
-                ap = []
-                bp = []
-                for i in range(len(predictions)):
-                    # if test_output[i][c][mid_bin] == 0:
-                    #     continue
-                    a.append(predictions[i][ci][mid_bin])
-                    b.append(test_output[i][c][mid_bin])
-                    if test_class[i] == 0:
-                        continue
-                    ap.append(predictions[i][ci][mid_bin])
-                    bp.append(test_output[i][c][mid_bin])
-                corr = stats.spearmanr(a, b)[0]
-                print("Correlation " + cell + ": " + str(corr) + " [" + str(len(a)) + "]")
-                corr = stats.spearmanr(ap, bp)[0]
-                print("Correlation coding " + cell + ": " + str(corr) + " [" + str(len(ap)) + "]")
-
-            del predictions
-            # print("Drawing")
-            # for c, cell in enumerate(cells):
-            #     ci = -2 + c
-            #     for i in range(1200, 1250, 1):
-            #         fig, axs = plt.subplots(2, 1, figsize=(12, 8))
-            #         vector1 = predictions[i][ci]
-            #         vector2 = test_output[i][ci]
-            #         x = range(num_regions)
-            #         d1 = {'bin': x, 'expression': vector1}
-            #         df1 = pd.DataFrame(d1)
-            #         d2 = {'bin': x, 'expression': vector2}
-            #         df2 = pd.DataFrame(d2)
-            #         sns.lineplot(data=df1, x='bin', y='expression', ax=axs[0])
-            #         axs[0].set_title("Prediction")
-            #         sns.lineplot(data=df2, x='bin', y='expression', ax=axs[1])
-            #         axs[1].set_title("Ground truth")
-            #         fig.tight_layout()
-            #         plt.savefig(figures_folder + "/tracks/track_" + str(i + 1) + "_" + str(cell) + "_" + test_info[i] + ".png")
-            #         plt.close(fig)
-            #
-            # # Marks
-            # for m in range(10):
-            #     for i in range(1200, 1250, 1):
-            #         fig, axs = plt.subplots(2, 1, figsize=(12, 8))
-            #         vector1 = predictions[i][m]
-            #         vector2 = test_output[i][m]
-            #         x = range(num_regions)
-            #         d1 = {'bin': x, 'expression': vector1}
-            #         df1 = pd.DataFrame(d1)
-            #         d2 = {'bin': x, 'expression': vector2}
-            #         df2 = pd.DataFrame(d2)
-            #         sns.lineplot(data=df1, x='bin', y='expression', ax=axs[0])
-            #         axs[0].set_title("Prediction")
-            #         sns.lineplot(data=df2, x='bin', y='expression', ax=axs[1])
-            #         axs[1].set_title("Ground truth")
-            #         fig.tight_layout()
-            #         plt.savefig(figures_folder + "/marks/track_" + str(i + 1) + "_" + str(m) + "_" + test_info[i] + ".png")
-            #         plt.close(fig)
-
-            # Gene regplot
-            # for c, cell in enumerate(cells):
-            #     ci = -2 + c
-            #     a = []
-            #     b = []
-            #     for i in range(len(predictions)):
-            #         if test_class[i] == 0:
-            #             continue
-            #         a.append(predictions[i][ci][mid_bin])
-            #         b.append(test_output[i][ci][mid_bin])
-            #
-            #     pickle.dump(a, open(figures_folder + "/" + str(cell) + "_a" + str(k) + ".p", "wb"),
-            #                 protocol=pickle.HIGHEST_PROTOCOL)
-            #     pickle.dump(b, open(figures_folder + "/" + str(cell) + "_b" + str(k) + ".p", "wb"),
-            #                 protocol=pickle.HIGHEST_PROTOCOL)
-            #
-            #     fig, ax = plt.subplots(figsize=(6, 6))
-            #     r, p = stats.spearmanr(a, b)
-            #
-            #     sns.regplot(x=a, y=b,
-            #                 ci=None, label="r = {0:.2f}; p = {1:.2e}".format(r, p)).legend(loc="best")
-            #
-            #     ax.set(xlabel='Predicted', ylabel='Ground truth')
-            #     plt.title("Gene expression prediction")
-            #     fig.tight_layout()
-            #     plt.savefig(figures_folder + "/corr_" + str(k) + "_" + str(cell) + ".svg")
-            #     plt.close(fig)
-
-            # attribution
-            # for c, cell in enumerate(cells):
-            #     for i in range(1200, 1210, 1):
-            #         baseline = tf.zeros(shape=(input_size, 4))
-            #         image = test_input_sequences[i].astype('float32')
-            #         ig_attributions = attribution.integrated_gradients(our_model, baseline=baseline,
-            #                                                            image=image,
-            #                                                            target_class_idx=[mid_bin, c],
-            #                                                            m_steps=40)
-            #
-            #         attribution_mask = tf.squeeze(ig_attributions).numpy()
-            #         attribution_mask = (attribution_mask - np.min(attribution_mask)) / (
-            #                     np.max(attribution_mask) - np.min(attribution_mask))
-            #         attribution_mask = np.mean(attribution_mask, axis=-1, keepdims=True)
-            #         attribution_mask[int(input_size / 2) - 2000 : int(input_size / 2) + 2000, :] = np.nan
-            #         attribution_mask = skimage.measure.block_reduce(attribution_mask, (100, 1), np.mean)
-            #         attribution_mask = np.transpose(attribution_mask)
-            #
-            #         fig, ax = plt.subplots(figsize=(60, 6))
-            #         sns.heatmap(attribution_mask, linewidth=0.0, ax=ax)
-            #         plt.tight_layout()
-            #         plt.savefig(figures_folder + "/attribution/track_" + str(i + 1) + "_" + str(cell) + "_" + test_info[i] + ".jpg")
-            #         plt.close(fig)
-        print("Cleaning" + datetime.now().strftime(' %H:%M:%S'))
+                # attribution
+                # for c, cell in enumerate(cells):
+                #     for i in range(1200, 1210, 1):
+                #         baseline = tf.zeros(shape=(input_size, 4))
+                #         image = test_input_sequences[i].astype('float32')
+                #         ig_attributions = attribution.integrated_gradients(our_model, baseline=baseline,
+                #                                                            image=image,
+                #                                                            target_class_idx=[mid_bin, c],
+                #                                                            m_steps=40)
+                #
+                #         attribution_mask = tf.squeeze(ig_attributions).numpy()
+                #         attribution_mask = (attribution_mask - np.min(attribution_mask)) / (
+                #                     np.max(attribution_mask) - np.min(attribution_mask))
+                #         attribution_mask = np.mean(attribution_mask, axis=-1, keepdims=True)
+                #         attribution_mask[int(input_size / 2) - 2000 : int(input_size / 2) + 2000, :] = np.nan
+                #         attribution_mask = skimage.measure.block_reduce(attribution_mask, (100, 1), np.mean)
+                #         attribution_mask = np.transpose(attribution_mask)
+                #
+                #         fig, ax = plt.subplots(figsize=(60, 6))
+                #         sns.heatmap(attribution_mask, linewidth=0.0, ax=ax)
+                #         plt.tight_layout()
+                #         plt.savefig(figures_folder + "/attribution/track_" + str(i + 1) + "_" + str(cell) + "_" + test_info[i] + ".jpg")
+                #         plt.close(fig)
+                del predictions
+            except Exception as e:
+                print(e)
+                print(datetime.now().strftime('[%H:%M:%S] ') + "Problem during evaluation")
+        print(datetime.now().strftime('[%H:%M:%S] ') + "Cleaning")
         # Needed to prevent Keras memory leak
         del input_sequences
         del output_scores
@@ -656,7 +769,7 @@ def train():
         gc.collect()
         K.clear_session()
         tf.compat.v1.reset_default_graph()
-        print("Epoch " + str(k) + " finished. ")
+        print(datetime.now().strftime('[%H:%M:%S] ') + "Epoch " + str(k) + " finished. ")
 
 
 # def read_ranges_1(file_path, good_chr):
