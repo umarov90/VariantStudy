@@ -5,13 +5,13 @@ from tensorflow.keras.models import Model
 from tensorflow.keras.regularizers import l2
 import tensorflow as tf
 
-projection_dim = 128
+projection_dim = 64
 num_heads = 8
 transformer_units = [
     projection_dim * 2,
     projection_dim,
 ]
-transformer_layers = 8
+transformer_layers = 6
 
 
 def simple_model(input_size, num_regions, cell_num):
@@ -19,8 +19,8 @@ def simple_model(input_size, num_regions, cell_num):
     inputs = Input(shape=input_shape)
     x = inputs
     x = Dropout(0.3)(x)
-    x = resnet_v2(x, 8, 2)
-    num_patches = 782
+    x = resnet_v2(x, 10, 1)
+    num_patches = 977
     x = Dropout(0.3)(x)
 
     # Encode patches.
@@ -49,7 +49,7 @@ def simple_model(input_size, num_regions, cell_num):
     representation = Dropout(0.2)(representation)
 
     # Compress
-    compress_dim = 4000
+    compress_dim = 1000
     x = Dense(compress_dim, name="latent_vector")(representation)
     x = LeakyReLU(alpha=0.1)(x)
     x = Dropout(0.5, input_shape=(None, compress_dim))(x)
@@ -124,7 +124,7 @@ def resnet_v2(input_x, num_stages, num_res_blocks):
             batch_normalization = True
             strides = 1
             if stage == 0:
-                num_filters_out = int(num_filters_in * 24) # changed from 4
+                num_filters_out = int(num_filters_in * 4) # changed from 4
                 if res_block == 0:  # first layer and first stage
                     activation = None
                     batch_normalization = False
@@ -201,3 +201,61 @@ class PatchEncoder(Layer):
             'projection_dim': self.projection_dim,
         })
         return config
+
+def keras_model_memory_usage_in_bytes(model, *, batch_size: int):
+    """
+    Return the estimated memory usage of a given Keras model in bytes.
+    This includes the model weights and layers, but excludes the dataset.
+
+    The model shapes are multipled by the batch size, but the weights are not.
+
+    Args:
+        model: A Keras model.
+        batch_size: The batch size you intend to run the model with. If you
+            have already specified the batch size in the model itself, then
+            pass `1` as the argument here.
+    Returns:
+        An estimate of the Keras model's memory usage in bytes.
+
+    """
+    default_dtype = tf.keras.backend.floatx()
+    shapes_mem_count = 0
+    internal_model_mem_count = 0
+    for layer in model.layers:
+        if isinstance(layer, tf.keras.Model):
+            internal_model_mem_count += keras_model_memory_usage_in_bytes(
+                layer, batch_size=batch_size
+            )
+        single_layer_mem = tf.as_dtype(layer.dtype or default_dtype).size
+        out_shape = layer.output_shape
+        if isinstance(out_shape, list):
+            out_shape = out_shape[0]
+        for s in out_shape:
+            if s is None:
+                continue
+            single_layer_mem *= s
+        shapes_mem_count += single_layer_mem
+
+    trainable_count = sum(
+        [tf.keras.backend.count_params(p) for p in model.trainable_weights]
+    )
+    non_trainable_count = sum(
+        [tf.keras.backend.count_params(p) for p in model.non_trainable_weights]
+    )
+
+    total_memory = (
+        batch_size * shapes_mem_count
+        + internal_model_mem_count
+        + trainable_count
+        + non_trainable_count
+    )
+    return GetHumanReadable(total_memory)
+
+
+def GetHumanReadable(size,precision=2):
+    suffixes=['B','KB','MB','GB','TB']
+    suffixIndex = 0
+    while size > 1024 and suffixIndex < 4:
+        suffixIndex += 1 #increment the index of the suffix
+        size = size/1024.0 #apply the division
+    return "%.*f%s"%(precision,size,suffixes[suffixIndex])

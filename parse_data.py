@@ -100,16 +100,9 @@ def parse_tracks(ga, bin_size):
             # print(t_name)
 
             gast = copy.deepcopy(ga)
-            if "CAGE.RNA.ctss" in fn:
-                print("CTSS: " + t_name)
-                dtypes = {"chr": str, "m": str, "start": int, "end": int, "score": float, "strand": str}
-                df = pd.read_csv(fn, sep="\t", names=["chr", "start", "end", "m", "score", "strand"],
-                                 dtype=dtypes, header=None, index_col=False)
-            else:
-                print("ENCODE: " + t_name)
-                dtypes = {"chr": str, "start": int, "end": int, "score": float}
-                df = pd.read_csv(fn, sep=" ", names=["chr", "start", "end", "score"],
-                                 dtype=dtypes, header=None, index_col=False)
+            dtypes = {"chr": str, "start": int, "end": int, "score": float}
+            df = pd.read_csv(fn, delim_whitespace=True, names=["chr", "start", "end", "score"],
+                             dtype=dtypes, header=None, index_col=False)
 
             chrd = list(df["chr"].unique())
             df["mid"] = (df["start"] + (df["end"] - df["start"]) / 2) / bin_size
@@ -192,4 +185,29 @@ def get_sequences(input_size, bin_size, chromosomes):
         joblib.dump(test_seq, "pickle/test_seq.gz", compress=3)
         joblib.dump(train_info, "pickle/train_info.gz", compress=3)
         gc.collect()
+
+
+    # genes = pd.read_csv("gencode.v38.annotation.gtf.gz",
+    #                     sep="\t", comment='#',
+    #                     names=["chr", "h", "type", "start", "end", "m1", "strand", "m2", "info"],
+    #                     header=None, index_col=False)
+    # genes = genes[genes.type == "gene"]
+    # genes["gene_name"] = genes["info"].apply(lambda x: re.search('gene_name "(.*)"; level', x).group(1)).copy()
+    # genes.drop(genes.columns.difference(['chr', 'start', "end", "gene_name"]), 1, inplace=True)
+    # test_info = []
+    # test_genes = genes.loc[genes['chr'] == "chr1"]
+    # test_seq = []
+    # half_size = math.floor(input_size / 2)
+    # for index, row in test_genes.iterrows():
+    #     pos = int(row["start"] + (row["end"] - row["start"]) / 2)
+    #     seq = one_hot[row["chr"]][pos - half_size:pos + half_size]
+    #     if len(seq) != input_size:
+    #         continue
+    #     test_seq.append(seq)
+    #     test_info.append([row["chr"], pos, row["gene_name"]])
+    # test_seq = np.asarray(test_seq)
+    # joblib.dump(test_info, "pickle/test_info.gz", compress=3)
+    # joblib.dump(test_seq, "pickle/test_seq.gz", compress=3)
+
+
     return ga, one_hot, train_info, test_info, test_seq
