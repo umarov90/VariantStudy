@@ -27,6 +27,8 @@ from heapq import nsmallest
 import copy
 import seaborn as sns
 import shutil
+import psutil
+import sys
 import parse_data as parser
 from datetime import datetime
 matplotlib.use("agg")
@@ -34,17 +36,18 @@ from scipy.ndimage.filters import gaussian_filter
 from tensorflow.keras import mixed_precision
 mixed_precision.set_global_policy('mixed_float16')
 
+
 def train():
     # Apply smoothing to output bins? Ask Hon how to do it best
     # transformer_layers = 8 Try 1 instead of 8
     model_folder = "model1"
     model_name = "expression_model_1.h5"
     figures_folder = "figures_1"
-    input_size = 500000
+    input_size = 1000000
     half_size = input_size / 2
     max_shift = 2000
     bin_size = 1000
-    hic_bin_size = 20000
+    hic_bin_size = 10000
     num_hic_bins = int(input_size / hic_bin_size)
     num_regions = int(input_size / bin_size)
     mid_bin = math.floor(num_regions / 2)
@@ -53,23 +56,26 @@ def train():
     strategy = tf.distribute.MirroredStrategy()
     print('Number of devices: {}'.format(strategy.num_replicas_in_sync))
     GLOBAL_BATCH_SIZE = BATCH_SIZE * strategy.num_replicas_in_sync
-    STEPS_PER_EPOCH = 4000
+    STEPS_PER_EPOCH = 100
     out_stack_num = 1000
     num_epochs = 10000
     test_chr = "chr1"
+    hic_track_size = 5
 
     Path(model_folder).mkdir(parents=True, exist_ok=True)
     Path(figures_folder + "/" + "attribution").mkdir(parents=True, exist_ok=True)
     Path(figures_folder + "/" + "tracks").mkdir(parents=True, exist_ok=True)
+    Path(figures_folder + "/" + "hic").mkdir(parents=True, exist_ok=True)
 
-    chromosomes = ["chrX", "chrY"]
+    chromosomes = ["chrX"] # "chrY"
     # our_model = mo.simple_model(input_size, num_regions, out_stack_num)
     # aaa = mo.keras_model_memory_usage_in_bytes(our_model, batch_size=1)
     # print(aaa)
     for i in range(1, 23):
         chromosomes.append("chr" + str(i))
 
-    hic_keys = parser.parse_hic()
+    # hic_keys = parser.parse_hic()
+    hic_keys = ["hic_ADAC418_10kb_interactions.txt.bz2"]
     ga, one_hot, train_info, test_info, test_seq = parser.get_sequences(input_size, bin_size, chromosomes)
     gas_keys = parser.parse_tracks(ga, bin_size)
 
@@ -98,16 +104,27 @@ def train():
     #             print(l.name)
     # our_model = our_model_new
     # print("0000000000000000000000000000")
+    print_memory()
+    for name, size in sorted(((name, sys.getsizeof(value)) for name, value in locals().items()),
+                             key=lambda x: -x[1])[:10]:
+        print("{:>30}: {:>8}".format(name, cm.get_human_readable(size)))
     for k in range(num_epochs):
         print(datetime.now().strftime('[%H:%M:%S] ') + "Epoch " + str(k))
         if k > 0:
             with strategy.scope():
                 our_model = tf.keras.models.load_model(model_folder + "/" + model_name,
                                                        custom_objects={'PatchEncoder': mo.PatchEncoder})
+
+        # rng_state = np.random.get_state()
+        # np.random.shuffle(input_sequences)
+        # np.random.set_state(rng_state)
+        # np.random.shuffle(output_scores)
+        random.shuffle(train_info)
+
         input_sequences = []
         output_scores = []
         print(datetime.now().strftime('[%H:%M:%S] ') + "Preparing sequences")
-        chosen_tracks = random.sample(gas_keys, out_stack_num - len(hic_keys))
+        chosen_tracks = random.sample(gas_keys, out_stack_num - len(hic_keys) * (hic_track_size))
         gas = {}
         for i, key in enumerate(chosen_tracks):
             our_model.get_layer("out_row_" + str(i)).set_weights(joblib.load(model_folder + "/" + key))
@@ -124,8 +141,11 @@ def train():
             try:
                 rand_var = random.randint(0, max_shift)
                 start = int(info[1] + (rand_var - max_shift / 2) - half_size)
+                if info[0] not in chromosomes:
+                    rands.append(-1)
+                    continue
                 ns = one_hot[info[0]][start:start + input_size]
-                if info[0] not in chromosomes or len(ns) == input_size:
+                if len(ns) == input_size:
                     rands.append(rand_var)
                 else:
                     rands.append(-1)
@@ -139,8 +159,8 @@ def train():
             except Exception as e:
                 print(e)
                 err += 1
-        print(np.asarray(input_sequences).shape)
-        print(np.asarray(output_scores).shape)
+        # print(np.asarray(input_sequences).shape)
+        # print(np.asarray(output_scores).shape)
         print("\nHi-C")
         for key in hic_keys:
             print(key, end=" ")
@@ -177,15 +197,20 @@ def train():
                     # print(f"original {len(hic_mat.flatten())}")
                     hic_mat = hic_mat[np.triu_indices_from(hic_mat, k=1)]
                     # print(f"triu {len(hic_mat.flatten())}")
-                    hic_mat.resize(num_regions, refcheck=False)
-                    # print(f"resize {len(hic_mat.flatten())}")
-                    output_scores[ni].append(hic_mat)
+                    for hs in range(hic_track_size):
+                        hic_slice = hic_mat[hs * num_regions: (hs + 1) * num_regions].copy()
+                        if len(hic_slice) != num_regions:
+                            hic_slice.resize(num_regions, refcheck=False)
+                        output_scores[ni].append(hic_slice)
                     ni += 1
                 except Exception as e:
                     print(e)
                     err += 1
-        print(np.asarray(input_sequences).shape)
-        print(np.asarray(output_scores).shape)
+            del hd
+            del hdf
+            gc.collect()
+        # print(np.asarray(input_sequences).shape)
+        # print(np.asarray(output_scores).shape)
         print("\nTest output")
         # preparing test output tracks
         test_output = []
@@ -224,26 +249,30 @@ def train():
                     # print(f"original {len(hic_mat.flatten())}")
                     hic_mat = hic_mat[np.triu_indices_from(hic_mat, k=1)]
                     # print(f"triu {len(hic_mat.flatten())}")
-                    hic_mat.resize(num_regions, refcheck=False)
-                    # print(f"resize {len(hic_mat.flatten())}")
-                    test_output[i].append(hic_mat)
+                    for hs in range(hic_track_size):
+                        hic_slice = hic_mat[hs * num_regions: (hs + 1) * num_regions].copy()
+                        if len(hic_slice) != num_regions:
+                            hic_slice.resize(num_regions, refcheck=False)
+                        test_output[i].append(hic_slice)
                 except Exception as e:
                     print(e)
                     err += 1
+            del hd
+            del hdf
+            gc.collect()
 
         test_output = np.asarray(test_output)
-        print(test_output.shape)
+        # print(test_output.shape)
 
         print("")
         print(datetime.now().strftime('[%H:%M:%S] ') + "Problems: " + str(err))
         output_scores = np.asarray(output_scores)
         input_sequences = np.asarray(input_sequences)
-
-        rng_state = np.random.get_state()
-        np.random.shuffle(input_sequences)
-        np.random.set_state(rng_state)
-        np.random.shuffle(output_scores)
-
+        gc.collect()
+        print_memory()
+        for name, size in sorted(((name, sys.getsizeof(value)) for name, value in locals().items()),
+                                 key=lambda x: -x[1])[:10]:
+            print("{:>30}: {:>8}".format(name, cm.get_human_readable(size)))
         # input_sequences = input_sequences[:GLOBAL_BATCH_SIZE * STEPS_PER_EPOCH]
         # output_scores = output_scores[:GLOBAL_BATCH_SIZE * STEPS_PER_EPOCH]
 
@@ -257,8 +286,8 @@ def train():
         lr = 0.0001
         fit_epochs = 1
         with strategy.scope():
-            if k == 0:
-                fit_epochs = 10
+            if k < 10:
+                fit_epochs = 2
             # if k % 9 != 0:
             #     freeze = True
             #     fit_epochs = 4
@@ -273,29 +302,32 @@ def train():
             our_model.compile(loss="mse", optimizer=Adam(learning_rate=lr))
 
         print(datetime.now().strftime('[%H:%M:%S] ') + "Training")
-        # if k != 0:
-        try:
-            train_data = wrap(input_sequences, output_scores, GLOBAL_BATCH_SIZE)
-            our_model.fit(train_data, epochs=fit_epochs)
-            our_model.save(model_folder + "/" + model_name + "_temp.h5")
-            os.remove(model_folder + "/" + model_name)
-            os.rename(model_folder + "/" + model_name + "_temp.h5", model_folder + "/" + model_name)
-            for i, key in enumerate(chosen_tracks):
-                joblib.dump(our_model.get_layer("out_row_" + str(i)).get_weights(), model_folder + "/" + key + "_temp",
-                            compress=3)
-                os.remove(model_folder + "/" + key)
-                os.rename(model_folder + "/" + key + "_temp", model_folder + "/" + key)
-        except Exception as e:
-            print(e)
-            print(datetime.now().strftime('[%H:%M:%S] ') + "Error while training. Loading previous model.")
-            with strategy.scope():
-                our_model = tf.keras.models.load_model(model_folder + "/" + model_name,
-                                                       custom_objects={'PatchEncoder': mo.PatchEncoder})
-            del input_sequences
-            del output_scores
-            del predictions
-            gc.collect()
-            continue
+        if k != 0:
+            try:
+                train_data = wrap(input_sequences, output_scores, GLOBAL_BATCH_SIZE)
+                gc.collect()
+                our_model.fit(train_data, epochs=fit_epochs)
+                our_model.save(model_folder + "/" + model_name + "_temp.h5")
+                os.remove(model_folder + "/" + model_name)
+                os.rename(model_folder + "/" + model_name + "_temp.h5", model_folder + "/" + model_name)
+                for i, key in enumerate(chosen_tracks):
+                    joblib.dump(our_model.get_layer("out_row_" + str(i)).get_weights(), model_folder + "/" + key + "_temp",
+                                compress=3)
+                    os.remove(model_folder + "/" + key)
+                    os.rename(model_folder + "/" + key + "_temp", model_folder + "/" + key)
+                del train_data
+                gc.collect()
+            except Exception as e:
+                print(e)
+                print(datetime.now().strftime('[%H:%M:%S] ') + "Error while training. Loading previous model.")
+                with strategy.scope():
+                    our_model = tf.keras.models.load_model(model_folder + "/" + model_name,
+                                                           custom_objects={'PatchEncoder': mo.PatchEncoder})
+                input_sequences = None
+                output_scores = None
+                predictions = None
+                gc.collect()
+                continue
 
         if k % 10 == 0 : # and k != 0
             print(datetime.now().strftime('[%H:%M:%S] ') + "Evaluating")
@@ -342,13 +374,11 @@ def train():
                 print("Drawing contact maps")
                 for h in range(len(hic_keys)):
                     pic_count = 0
-                    it = len(chosen_tracks) + h
+                    it = len(chosen_tracks) + h * hic_track_size
                     for i in range(len(predictions)):
-                        if np.sum(output_scores[i][it]) == 0:
-                            continue
-                        mat_gt = recover_shape(output_scores[i][it], num_hic_bins)
-                        mat_pred = recover_shape(predictions[i][it], num_hic_bins)
-                        fig, axs = plt.subplots(2, 1, figsize=(8, 8))
+                        mat_gt = recover_shape(output_scores[i][it:it + hic_track_size], num_hic_bins)
+                        mat_pred = recover_shape(predictions[i][it:it + hic_track_size], num_hic_bins)
+                        fig, axs = plt.subplots(2, 1, figsize=(6, 8))
                         sns.heatmap(mat_pred, linewidth=0.0, ax=axs[0])
                         axs[0].set_title("Prediction")
                         sns.heatmap(mat_gt, linewidth=0.0, ax=axs[1])
@@ -357,7 +387,7 @@ def train():
                         plt.savefig(figures_folder + "/hic/train_track_" + str(i + 1) + "_" + str(hic_keys[h]) + ".png")
                         plt.close(fig)
                         pic_count += 1
-                        if pic_count > 4:
+                        if pic_count > 50:
                             break
 
                 print("Test set")
@@ -375,13 +405,13 @@ def train():
                 print(f"Correlation : {np.mean(corrs)}")
 
                 with open("result.txt", "a+") as myfile:
-                    myfile.write(str(np.mean(corrs)))
+                    myfile.write(str(np.mean(corrs)) + "\n")
 
                 print("Drawing tracks")
                 pic_count = 0
                 for it, ct in enumerate(chosen_tracks):
                     for i in range(len(predictions)):
-                        if np.sum(output_scores[i][it]) == 0:
+                        if np.sum(test_output[i][it]) == 0:
                             continue
                         fig, axs = plt.subplots(2, 1, figsize=(12, 8))
                         vector1 = predictions[i][it]
@@ -406,13 +436,11 @@ def train():
                 print("Drawing contact maps")
                 for h in range(len(hic_keys)):
                     pic_count = 0
-                    it = len(chosen_tracks) + h
+                    it = len(chosen_tracks) + h * hic_track_size
                     for i in range(len(predictions)):
-                        if np.sum(output_scores[i][it]) == 0:
-                            continue
-                        mat_gt = recover_shape(output_scores[i][it], num_hic_bins)
-                        mat_pred = recover_shape(predictions[i][it], num_hic_bins)
-                        fig, axs = plt.subplots(2, 1, figsize=(8, 8))
+                        mat_gt = recover_shape(test_output[i][it: it + hic_track_size], num_hic_bins)
+                        mat_pred = recover_shape(predictions[i][it: it + hic_track_size], num_hic_bins)
+                        fig, axs = plt.subplots(2, 1, figsize=(6, 8))
                         sns.heatmap(mat_pred, linewidth=0.0, ax=axs[0])
                         axs[0].set_title("Prediction")
                         sns.heatmap(mat_gt, linewidth=0.0, ax=axs[1])
@@ -421,7 +449,7 @@ def train():
                         plt.savefig(figures_folder + "/hic/test_track_" + str(i + 1) + "_" + str(hic_keys[h]) + ".png")
                         plt.close(fig)
                         pic_count += 1
-                        if pic_count > 4:
+                        if pic_count > 50:
                             break
 
                 # Gene regplot
@@ -475,23 +503,35 @@ def train():
                 #         plt.tight_layout()
                 #         plt.savefig(figures_folder + "/attribution/track_" + str(i + 1) + "_" + str(cell) + "_" + test_info[i] + ".jpg")
                 #         plt.close(fig)
-                del predictions
+                predictions = None
             except Exception as e:
                 print(e)
                 print(datetime.now().strftime('[%H:%M:%S] ') + "Problem during evaluation")
+        print_memory()
         print(datetime.now().strftime('[%H:%M:%S] ') + "Cleaning")
         # Needed to prevent Keras memory leak
-        del input_sequences
-        del output_scores
-        del our_model
-        del gas
+        input_sequences = None
+        output_scores = None
+        test_output = None
+        our_model = None
+        gas = None
         gc.collect()
         K.clear_session()
         tf.compat.v1.reset_default_graph()
+        print_memory()
+        for name, size in sorted(((name, sys.getsizeof(value)) for name, value in locals().items()),
+                                 key=lambda x: -x[1])[:10]:
+            print("{:>30}: {:>8}".format(name, cm.get_human_readable(size)))
         print(datetime.now().strftime('[%H:%M:%S] ') + "Epoch " + str(k) + " finished. ")
 
 
+def print_memory():
+    mem = psutil.virtual_memory()
+    print(f"used: {cm.get_human_readable(mem.used)} available: {cm.get_human_readable(mem.available)}")
+
+
 def recover_shape(v, size_X):
+    v = v.flatten()
     end = int( (size_X * size_X - size_X) / 2)
     v = v[:end]
     X = np.zeros((size_X, size_X))

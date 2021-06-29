@@ -167,7 +167,7 @@ def get_sequences(input_size, bin_size, chromosomes):
         for index, row in test_genes.iterrows():
             pos = int(row["start"] + (row["end"] - row["start"]) / 2)
             seq = one_hot[row["chr"]][pos - half_size:pos + half_size]
-            if len(seq) != input_size:
+            if len(seq) != input_size or row["chr"] not in chromosomes:
                 continue
             test_seq.append(seq)
             test_info.append([row["chr"], pos, row["gene_name"]])
@@ -196,18 +196,18 @@ def get_sequences(input_size, bin_size, chromosomes):
     # genes.drop(genes.columns.difference(['chr', 'start', "end", "gene_name"]), 1, inplace=True)
     # test_info = []
     # test_genes = genes.loc[genes['chr'] == "chr1"]
+    # test_genes = test_genes.sample(frac=0.3).reset_index(drop=True)
     # test_seq = []
     # half_size = math.floor(input_size / 2)
     # for index, row in test_genes.iterrows():
     #     pos = int(row["start"] + (row["end"] - row["start"]) / 2)
     #     seq = one_hot[row["chr"]][pos - half_size:pos + half_size]
-    #     if len(seq) != input_size:
+    #     if len(seq) != input_size or row["chr"] not in chromosomes:
     #         continue
     #     test_seq.append(seq)
     #     test_info.append([row["chr"], pos, row["gene_name"]])
     # test_seq = np.asarray(test_seq)
     # joblib.dump(test_info, "pickle/test_info.gz", compress=3)
     # joblib.dump(test_seq, "pickle/test_seq.gz", compress=3)
-
 
     return ga, one_hot, train_info, test_info, test_seq

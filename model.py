@@ -4,14 +4,16 @@ from tensorflow.keras.layers import LeakyReLU, LayerNormalization, MultiHeadAtte
 from tensorflow.keras.models import Model
 from tensorflow.keras.regularizers import l2
 import tensorflow as tf
+import common as cm
 
-projection_dim = 64
-num_heads = 8
+
+projection_dim = 32
+num_heads = 4
 transformer_units = [
     projection_dim * 2,
     projection_dim,
 ]
-transformer_layers = 6
+transformer_layers = 4
 
 
 def simple_model(input_size, num_regions, cell_num):
@@ -20,7 +22,7 @@ def simple_model(input_size, num_regions, cell_num):
     x = inputs
     x = Dropout(0.3)(x)
     x = resnet_v2(x, 10, 1)
-    num_patches = 977
+    num_patches = 1954
     x = Dropout(0.3)(x)
 
     # Encode patches.
@@ -49,7 +51,7 @@ def simple_model(input_size, num_regions, cell_num):
     representation = Dropout(0.2)(representation)
 
     # Compress
-    compress_dim = 1000
+    compress_dim = 512
     x = Dense(compress_dim, name="latent_vector")(representation)
     x = LeakyReLU(alpha=0.1)(x)
     x = Dropout(0.5, input_shape=(None, compress_dim))(x)
@@ -124,7 +126,7 @@ def resnet_v2(input_x, num_stages, num_res_blocks):
             batch_normalization = True
             strides = 1
             if stage == 0:
-                num_filters_out = int(num_filters_in * 4) # changed from 4
+                num_filters_out = int(num_filters_in * 2) # changed from 4
                 if res_block == 0:  # first layer and first stage
                     activation = None
                     batch_normalization = False
@@ -249,13 +251,4 @@ def keras_model_memory_usage_in_bytes(model, *, batch_size: int):
         + trainable_count
         + non_trainable_count
     )
-    return GetHumanReadable(total_memory)
-
-
-def GetHumanReadable(size,precision=2):
-    suffixes=['B','KB','MB','GB','TB']
-    suffixIndex = 0
-    while size > 1024 and suffixIndex < 4:
-        suffixIndex += 1 #increment the index of the suffix
-        size = size/1024.0 #apply the division
-    return "%.*f%s"%(precision,size,suffixes[suffixIndex])
+    return cm.get_human_readable(total_memory)
