@@ -78,7 +78,10 @@ def train():
     # hic_keys = parser.parse_hic()
     hic_keys = ["hic_ADAC418_10kb_interactions.txt.bz2"]
     ga, one_hot, train_info, test_info, test_seq = parser.get_sequences(input_size, bin_size, chromosomes)
-    gas_keys = parser.parse_tracks(ga, bin_size)
+    if Path("pickle/gas_keys.gz").is_file():
+        gas_keys = joblib.load("pickle/gas_keys.gz")
+    else:
+        gas_keys = parser.parse_tracks(ga, bin_size)
 
     print("Number of tracks: " + str(len(gas_keys)))
     with strategy.scope():
