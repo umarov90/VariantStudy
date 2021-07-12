@@ -7,8 +7,8 @@ import tensorflow as tf
 import common as cm
 
 
-projection_dim = 32
-num_heads = 4
+projection_dim = 64
+num_heads = 6
 transformer_units = [
     projection_dim * 2,
     projection_dim,
@@ -21,37 +21,38 @@ def simple_model(input_size, num_regions, cell_num):
     inputs = Input(shape=input_shape)
     x = inputs
     x = Dropout(0.3)(x)
-    x = resnet_v2(x, 10, 1)
-    num_patches = 1954
+    x = resnet_v2(x, 10, 2)
+    num_patches = 79
     x = Dropout(0.3)(x)
 
-    # Encode patches.
-    encoded_patches = PatchEncoder(num_patches, projection_dim)(x)
+    # # Encode patches.
+    # encoded_patches = PatchEncoder(num_patches, projection_dim)(x)
+    #
+    # # Create multiple layers of the Transformer block.
+    # for i in range(transformer_layers):
+    #     # Layer normalization 1.
+    #     x1 = LayerNormalization(epsilon=1e-6, name="ln_" + str(i) + "_1")(encoded_patches)
+    #     # Create a multi-head attention layer.
+    #     attention_output = MultiHeadAttention(
+    #         num_heads=num_heads, key_dim=projection_dim, dropout=0.1, name="mha_" + str(i)
+    #     )(x1, x1)
+    #     # Skip connection 1.
+    #     x2 = Add()([attention_output, encoded_patches])
+    #     # Layer normalization 2.
+    #     x3 = LayerNormalization(epsilon=1e-6, name="ln_" + str(i) + "_2")(x2)
+    #     # MLP.
+    #     x3 = mlp(x3, hidden_units=transformer_units, dropout_rate=0.1, name="mlp_" + str(i))
+    #     # Skip connection 2.
+    #     encoded_patches = Add()([x3, x2])
+    #
+    # # Create a [batch_size, projection_dim] tensor.
+    # representation = LayerNormalization(epsilon=1e-6, name="ln_rep")(encoded_patches)
+    # representation = Flatten()(representation)
+    # representation = Dropout(0.2)(representation)
 
-    # Create multiple layers of the Transformer block.
-    for i in range(transformer_layers):
-        # Layer normalization 1.
-        x1 = LayerNormalization(epsilon=1e-6, name="ln_" + str(i) + "_1")(encoded_patches)
-        # Create a multi-head attention layer.
-        attention_output = MultiHeadAttention(
-            num_heads=num_heads, key_dim=projection_dim, dropout=0.1, name="mha_" + str(i)
-        )(x1, x1)
-        # Skip connection 1.
-        x2 = Add()([attention_output, encoded_patches])
-        # Layer normalization 2.
-        x3 = LayerNormalization(epsilon=1e-6, name="ln_" + str(i) + "_2")(x2)
-        # MLP.
-        x3 = mlp(x3, hidden_units=transformer_units, dropout_rate=0.1, name="mlp_" + str(i))
-        # Skip connection 2.
-        encoded_patches = Add()([x3, x2])
-
-    # Create a [batch_size, projection_dim] tensor.
-    representation = LayerNormalization(epsilon=1e-6, name="ln_rep")(encoded_patches)
-    representation = Flatten()(representation)
-    representation = Dropout(0.2)(representation)
-
+    representation = Flatten()(x)
     # Compress
-    compress_dim = 512
+    compress_dim = 2000
     x = Dense(compress_dim, name="latent_vector")(representation)
     x = LeakyReLU(alpha=0.1)(x)
     x = Dropout(0.5, input_shape=(None, compress_dim))(x)
@@ -59,7 +60,7 @@ def simple_model(input_size, num_regions, cell_num):
 
     outs = []
     for i in range(cell_num):
-        ol = Dense(num_regions, name="out_row_"+str(i))(x)
+        ol = Dense(num_regions, use_bias=False, name="out_row_"+str(i))(x)
         ol = LeakyReLU(alpha=0.1, name="act_out_row_"+str(i))(ol)
         outs.append(ol)
         if i % 50 == 0:
@@ -88,6 +89,7 @@ def resnet_layer(inputs,
                   kernel_size=kernel_size,
                   strides=strides,
                   padding='same',
+                  use_bias=False,
                   name=name+"conv1d"
                   # kernel_regularizer=l2(1e-6),
                   # activity_regularizer=l2(1e-6)
@@ -111,7 +113,7 @@ def resnet_layer(inputs,
 
 def resnet_v2(input_x, num_stages, num_res_blocks):
     # Start model definition.
-    num_filters_in = 16
+    num_filters_in = 64
 
     # v2 performs Conv2D with BN-ReLU on input before splitting into 2 paths
     x = resnet_layer(inputs=input_x,
@@ -125,13 +127,12 @@ def resnet_v2(input_x, num_stages, num_res_blocks):
             activation = 'relu'
             batch_normalization = True
             strides = 1
+            num_filters_out = int(num_filters_in * 1.1)
             if stage == 0:
-                num_filters_out = int(num_filters_in * 2) # changed from 4
                 if res_block == 0:  # first layer and first stage
                     activation = None
                     batch_normalization = False
             else:
-                num_filters_out = int(num_filters_in * 1.1) # changed from 2
                 if res_block == 0:  # first layer but not first stage
                     strides = 2    # downsample
 

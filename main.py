@@ -12,6 +12,7 @@ import gc
 import random
 import pandas as pd
 import math
+import time
 import attribution
 import model as mo
 import numpy as np
@@ -34,16 +35,16 @@ from datetime import datetime
 matplotlib.use("agg")
 from scipy.ndimage.filters import gaussian_filter
 from tensorflow.keras import mixed_precision
-mixed_precision.set_global_policy('mixed_float16')
+# mixed_precision.set_global_policy('mixed_float16')
 
 
 def train():
     # Apply smoothing to output bins? Ask Hon how to do it best
-    # transformer_layers = 8 Try 1 instead of 8
+    # Turn off bias for all conv1d and try perf after 20.
     model_folder = "model1"
     model_name = "expression_model_1.h5"
     figures_folder = "figures_1"
-    input_size = 1000000
+    input_size = 40000
     half_size = input_size / 2
     max_shift = 2000
     bin_size = 1000
@@ -51,16 +52,16 @@ def train():
     num_hic_bins = int(input_size / hic_bin_size)
     num_regions = int(input_size / bin_size)
     mid_bin = math.floor(num_regions / 2)
-    BATCH_SIZE = 1
-    # strategy = tf.distribute.experimental.MultiWorkerMirroredStrategy()
-    strategy = tf.distribute.MirroredStrategy()
+    BATCH_SIZE = 2
+    strategy = tf.distribute.experimental.MultiWorkerMirroredStrategy()
+    # strategy = tf.distribute.MirroredStrategy()
     print('Number of devices: {}'.format(strategy.num_replicas_in_sync))
     GLOBAL_BATCH_SIZE = BATCH_SIZE * strategy.num_replicas_in_sync
-    STEPS_PER_EPOCH = 100
+    STEPS_PER_EPOCH = 6000
     out_stack_num = 1000
     num_epochs = 10000
     test_chr = "chr1"
-    hic_track_size = 5
+    hic_track_size = 1
 
     Path(model_folder).mkdir(parents=True, exist_ok=True)
     Path(figures_folder + "/" + "attribution").mkdir(parents=True, exist_ok=True)
@@ -90,9 +91,9 @@ def train():
             Path(model_folder).mkdir(parents=True, exist_ok=True)
             our_model.save(model_folder + "/" + model_name)
             print("Model saved")
-            joblib.dump(our_model.get_layer("out_row_0").get_weights(), model_folder + "/" + gas_keys[0], compress=3)
-            for i in range(1, len(gas_keys), 1):
-                shutil.copyfile(model_folder + "/" + gas_keys[0], model_folder + "/" + gas_keys[i])
+            # joblib.dump(our_model.get_layer("out_row_0").get_weights(), model_folder + "/" + gas_keys[0], compress=3)
+            # for i in range(1, len(gas_keys), 1):
+            #     shutil.copyfile(model_folder + "/" + gas_keys[0], model_folder + "/" + gas_keys[i])
             print("\nWeights saved")
     # print("0000000000000000000000000000")
     # our_model_new = mo.simple_model(input_size, num_regions, 200)
@@ -127,7 +128,8 @@ def train():
         chosen_tracks = random.sample(gas_keys, out_stack_num - len(hic_keys) * (hic_track_size))
         gas = {}
         for i, key in enumerate(chosen_tracks):
-            our_model.get_layer("out_row_" + str(i)).set_weights(joblib.load(model_folder + "/" + key))
+            if k > 0:
+                our_model.get_layer("out_row_" + str(i)).set_weights(joblib.load(model_folder + "/" + key))
             gas[key] = joblib.load("parsed_tracks/" + key)
         print(datetime.now().strftime('[%H:%M:%S] ') + "Loaded the tracks")
         err = 0
@@ -286,7 +288,9 @@ def train():
         lr = 0.0001
         fit_epochs = 1
         with strategy.scope():
-            if k < 10:
+            if k == 0:
+                fit_epochs = 20
+            else:
                 fit_epochs = 2
             # if k % 9 != 0:
             #     freeze = True
@@ -302,32 +306,48 @@ def train():
             our_model.compile(loss="mse", optimizer=Adam(learning_rate=lr))
 
         print(datetime.now().strftime('[%H:%M:%S] ') + "Training")
-        if k != 0:
-            try:
-                train_data = wrap(input_sequences, output_scores, GLOBAL_BATCH_SIZE)
-                gc.collect()
-                our_model.fit(train_data, epochs=fit_epochs)
-                our_model.save(model_folder + "/" + model_name + "_temp.h5")
-                os.remove(model_folder + "/" + model_name)
-                os.rename(model_folder + "/" + model_name + "_temp.h5", model_folder + "/" + model_name)
-                for i, key in enumerate(chosen_tracks):
-                    joblib.dump(our_model.get_layer("out_row_" + str(i)).get_weights(), model_folder + "/" + key + "_temp",
-                                compress=3)
+        # if k != 0:
+        try:
+            train_data = wrap(input_sequences, output_scores, GLOBAL_BATCH_SIZE)
+            gc.collect()
+            our_model.fit(train_data, epochs=fit_epochs)
+            our_model.save(model_folder + "/" + model_name + "_temp.h5")
+            os.remove(model_folder + "/" + model_name)
+            os.rename(model_folder + "/" + model_name + "_temp.h5", model_folder + "/" + model_name)
+            for i, key in enumerate(chosen_tracks):
+                joblib.dump(our_model.get_layer("out_row_" + str(i)).get_weights(), model_folder + "/" + key + "_temp",
+                            compress=3)
+                if os.path.exists(model_folder + "/" + key):
                     os.remove(model_folder + "/" + key)
-                    os.rename(model_folder + "/" + key + "_temp", model_folder + "/" + key)
-                del train_data
-                gc.collect()
-            except Exception as e:
-                print(e)
-                print(datetime.now().strftime('[%H:%M:%S] ') + "Error while training. Loading previous model.")
-                with strategy.scope():
-                    our_model = tf.keras.models.load_model(model_folder + "/" + model_name,
-                                                           custom_objects={'PatchEncoder': mo.PatchEncoder})
-                input_sequences = None
-                output_scores = None
-                predictions = None
-                gc.collect()
-                continue
+                os.rename(model_folder + "/" + key + "_temp", model_folder + "/" + key)
+            if k == 0:
+                all_weights = []
+                for i in range(len(chosen_tracks)):
+                    all_weights.append(our_model.get_layer("out_row_" + str(i)).get_weights()[0])
+                all_weights = np.asarray(all_weights)
+                all_weights = np.mean(all_weights, axis=0)
+                joblib.dump([all_weights], model_folder + "/avg", compress=3)
+                for i in range(len(gas_keys)):
+                    if gas_keys[i] in chosen_tracks:
+                        continue
+                    shutil.copyfile(model_folder + "/avg", model_folder + "/" + gas_keys[i])
+            del train_data
+            gc.collect()
+        except Exception as e:
+            print(e)
+            print(datetime.now().strftime('[%H:%M:%S] ') + "Error while training. Loading previous model.")
+            K.clear_session()
+            tf.compat.v1.reset_default_graph()
+            gc.collect()
+            time.sleep(5)
+            with strategy.scope():
+                our_model = tf.keras.models.load_model(model_folder + "/" + model_name,
+                                                       custom_objects={'PatchEncoder': mo.PatchEncoder})
+            input_sequences = None
+            output_scores = None
+            predictions = None
+            gc.collect()
+            continue
 
         if k % 10 == 0 : # and k != 0
             print(datetime.now().strftime('[%H:%M:%S] ') + "Evaluating")
@@ -335,16 +355,17 @@ def train():
                 print("Training set")
                 predictions = our_model.predict(input_sequences[0:1000], batch_size=1)
 
-                corrs = []
+                corrs = {}
                 for it, ct in enumerate(chosen_tracks):
-                    if "ctss" in ct:
-                        a = []
-                        b = []
-                        for i in range(len(predictions)):
-                            a.append(predictions[i][it][mid_bin])
-                            b.append(output_scores[i][it][mid_bin])
-                        corrs.append(stats.spearmanr(a, b)[0])
-                print(f"Correlation : {np.mean(corrs)}")
+                    type = ct[ct.find("tracks_")+len("tracks_"):ct.find(".")]
+                    a = []
+                    b = []
+                    for i in range(len(predictions)):
+                        a.append(predictions[i][it][mid_bin])
+                        b.append(output_scores[i][it][mid_bin])
+                    corrs.setdefault(type, []).append(stats.spearmanr(a, b)[0])
+                for track_type in corrs.keys():
+                    print(f"{track_type} correlation : {np.mean(corrs[track_type])}")
 
                 print("Drawing tracks")
                 pic_count = 0
@@ -387,25 +408,31 @@ def train():
                         plt.savefig(figures_folder + "/hic/train_track_" + str(i + 1) + "_" + str(hic_keys[h]) + ".png")
                         plt.close(fig)
                         pic_count += 1
-                        if pic_count > 50:
+                        if pic_count > 5:
                             break
 
                 print("Test set")
                 predictions = our_model.predict(test_seq[0:1000], batch_size=1)
 
-                corrs = []
+                corrs = {}
                 for it, ct in enumerate(chosen_tracks):
-                    if "ctss" in ct:
-                        a = []
-                        b = []
-                        for i in range(len(predictions)):
-                            a.append(predictions[i][it][mid_bin])
-                            b.append(test_output[i][it][mid_bin])
-                        corrs.append(stats.spearmanr(a, b)[0])
-                print(f"Correlation : {np.mean(corrs)}")
+                    type = ct[ct.find("tracks_") + len("tracks_"):ct.find(".")]
+                    a = []
+                    b = []
+                    for i in range(len(predictions)):
+                        a.append(predictions[i][it][mid_bin])
+                        b.append(test_output[i][it][mid_bin])
+                    corrs.setdefault(type, []).append(stats.spearmanr(a, b)[0])
+                for track_type in corrs.keys():
+                    print(f"{track_type} correlation : {np.mean(corrs[track_type])}")
 
                 with open("result.txt", "a+") as myfile:
-                    myfile.write(str(np.mean(corrs)) + "\n")
+                    myfile.write(datetime.now().strftime('[%H:%M:%S] ') + "\n")
+                    for track_type in corrs.keys():
+                        myfile.write(str(track_type) + "\t")
+                    for track_type in corrs.keys():
+                        myfile.write(str(np.mean(corrs[track_type])) + "\t")
+                    myfile.write("\n")
 
                 print("Drawing tracks")
                 pic_count = 0
@@ -449,7 +476,7 @@ def train():
                         plt.savefig(figures_folder + "/hic/test_track_" + str(i + 1) + "_" + str(hic_keys[h]) + ".png")
                         plt.close(fig)
                         pic_count += 1
-                        if pic_count > 50:
+                        if pic_count > 5:
                             break
 
                 # Gene regplot
@@ -550,5 +577,7 @@ def wrap(input_sequences, output_scores, bs):
 
 
 if __name__ == '__main__':
-    os.chdir(open("data_dir").read().strip())
+    # get the current folder absolute path
+    # os.chdir(open("data_dir").read().strip())
+    os.chdir("/home/acd13586qv/variants")
     train()
