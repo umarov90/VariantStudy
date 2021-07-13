@@ -52,13 +52,13 @@ def train():
     num_hic_bins = int(input_size / hic_bin_size)
     num_regions = int(input_size / bin_size)
     mid_bin = math.floor(num_regions / 2)
-    BATCH_SIZE = 2
+    BATCH_SIZE = 4
     strategy = tf.distribute.experimental.MultiWorkerMirroredStrategy()
     # strategy = tf.distribute.MirroredStrategy()
     print('Number of devices: {}'.format(strategy.num_replicas_in_sync))
     GLOBAL_BATCH_SIZE = BATCH_SIZE * strategy.num_replicas_in_sync
     STEPS_PER_EPOCH = 6000
-    out_stack_num = 1000
+    out_stack_num = 4000
     num_epochs = 10000
     test_chr = "chr1"
     hic_track_size = 1
@@ -76,7 +76,7 @@ def train():
         chromosomes.append("chr" + str(i))
 
     # hic_keys = parser.parse_hic()
-    hic_keys = ["hic_ADAC418_10kb_interactions.txt.bz2"]
+    # hic_keys = ["hic_ADAC418_10kb_interactions.txt.bz2"]
     ga, one_hot, train_info, test_info, test_seq = parser.get_sequences(input_size, bin_size, chromosomes)
     if Path("pickle/gas_keys.gz").is_file():
         gas_keys = joblib.load("pickle/gas_keys.gz")
@@ -84,11 +84,13 @@ def train():
         gas_keys = parser.parse_tracks(ga, bin_size)
 
     print("Number of tracks: " + str(len(gas_keys)))
+    model_was_created = True
     with strategy.scope():
         if Path(model_folder + "/" + model_name).is_file():
             our_model = tf.keras.models.load_model(model_folder + "/" + model_name,
                                                    custom_objects={'PatchEncoder': mo.PatchEncoder})
             print('Loaded existing model')
+            model_was_created = False
         else:
             our_model = mo.simple_model(input_size, num_regions, out_stack_num)
             Path(model_folder).mkdir(parents=True, exist_ok=True)
@@ -128,7 +130,7 @@ def train():
         input_sequences = []
         output_scores = []
         print(datetime.now().strftime('[%H:%M:%S] ') + "Preparing sequences")
-        chosen_tracks = random.sample(gas_keys, out_stack_num - len(hic_keys) * (hic_track_size))
+        chosen_tracks = random.sample(gas_keys, out_stack_num) # - len(hic_keys) * (hic_track_size)
         gas = {}
         for i, key in enumerate(chosen_tracks):
             if k > 0:
@@ -166,54 +168,54 @@ def train():
                 err += 1
         # print(np.asarray(input_sequences).shape)
         # print(np.asarray(output_scores).shape)
-        print("\nHi-C")
-        for key in hic_keys:
-            print(key, end=" ")
-            hdf = joblib.load("parsed_hic/" + key)
-            ni = 0
-            for i, info in enumerate(train_info):
-                if i >= len(rands):
-                    break
-                try:
-                    rand_var = rands[i]
-                    if rand_var == -1:
-                        continue
-                    hd = hdf[info[0]]
-                    hic_mat = np.zeros((num_hic_bins, num_hic_bins))
-                    start_hic = int((info[1] + (rand_var - max_shift / 2) - half_size))
-                    end_hic = start_hic + input_size
-                    start_row = hd['locus1'].searchsorted(start_hic - hic_bin_size, side='left')
-                    end_row = hd['locus1'].searchsorted(end_hic, side='right')
-                    hd = hd.iloc[start_row:end_row]
-                    # convert start of the input region to the bin number
-                    start_hic = int(start_hic / hic_bin_size)
-                    # subtract start bin from the binned entries in the range [start_row : end_row]
-                    l1 = (np.floor(hd["locus1"].values / hic_bin_size) - start_hic).astype(int)
-                    l2 = (np.floor(hd["locus2"].values / hic_bin_size) - start_hic).astype(int)
-                    hic_score = hd["score"].values
-                    # drop contacts with regions outside the [start_row : end_row] range
-                    lix = (l2 < len(hic_mat)) & (l2 >= 0) & (l1 >= 0)
-                    l1 = l1[lix]
-                    l2 = l2[lix]
-                    hic_score = hic_score[lix]
-                    hic_mat[l1, l2] += hic_score
-                    # hic_mat = hic_mat + hic_mat.T - np.diag(np.diag(hic_mat))
-                    hic_mat = gaussian_filter(hic_mat, sigma=1)
-                    # print(f"original {len(hic_mat.flatten())}")
-                    hic_mat = hic_mat[np.triu_indices_from(hic_mat, k=1)]
-                    # print(f"triu {len(hic_mat.flatten())}")
-                    for hs in range(hic_track_size):
-                        hic_slice = hic_mat[hs * num_regions: (hs + 1) * num_regions].copy()
-                        if len(hic_slice) != num_regions:
-                            hic_slice.resize(num_regions, refcheck=False)
-                        output_scores[ni].append(hic_slice)
-                    ni += 1
-                except Exception as e:
-                    print(e)
-                    err += 1
-            del hd
-            del hdf
-            gc.collect()
+        # print("\nHi-C")
+        # for key in hic_keys:
+        #     print(key, end=" ")
+        #     hdf = joblib.load("parsed_hic/" + key)
+        #     ni = 0
+        #     for i, info in enumerate(train_info):
+        #         if i >= len(rands):
+        #             break
+        #         try:
+        #             rand_var = rands[i]
+        #             if rand_var == -1:
+        #                 continue
+        #             hd = hdf[info[0]]
+        #             hic_mat = np.zeros((num_hic_bins, num_hic_bins))
+        #             start_hic = int((info[1] + (rand_var - max_shift / 2) - half_size))
+        #             end_hic = start_hic + input_size
+        #             start_row = hd['locus1'].searchsorted(start_hic - hic_bin_size, side='left')
+        #             end_row = hd['locus1'].searchsorted(end_hic, side='right')
+        #             hd = hd.iloc[start_row:end_row]
+        #             # convert start of the input region to the bin number
+        #             start_hic = int(start_hic / hic_bin_size)
+        #             # subtract start bin from the binned entries in the range [start_row : end_row]
+        #             l1 = (np.floor(hd["locus1"].values / hic_bin_size) - start_hic).astype(int)
+        #             l2 = (np.floor(hd["locus2"].values / hic_bin_size) - start_hic).astype(int)
+        #             hic_score = hd["score"].values
+        #             # drop contacts with regions outside the [start_row : end_row] range
+        #             lix = (l2 < len(hic_mat)) & (l2 >= 0) & (l1 >= 0)
+        #             l1 = l1[lix]
+        #             l2 = l2[lix]
+        #             hic_score = hic_score[lix]
+        #             hic_mat[l1, l2] += hic_score
+        #             # hic_mat = hic_mat + hic_mat.T - np.diag(np.diag(hic_mat))
+        #             hic_mat = gaussian_filter(hic_mat, sigma=1)
+        #             # print(f"original {len(hic_mat.flatten())}")
+        #             hic_mat = hic_mat[np.triu_indices_from(hic_mat, k=1)]
+        #             # print(f"triu {len(hic_mat.flatten())}")
+        #             for hs in range(hic_track_size):
+        #                 hic_slice = hic_mat[hs * num_regions: (hs + 1) * num_regions].copy()
+        #                 if len(hic_slice) != num_regions:
+        #                     hic_slice.resize(num_regions, refcheck=False)
+        #                 output_scores[ni].append(hic_slice)
+        #             ni += 1
+        #         except Exception as e:
+        #             print(e)
+        #             err += 1
+        #     del hd
+        #     del hdf
+        #     gc.collect()
         # print(np.asarray(input_sequences).shape)
         # print(np.asarray(output_scores).shape)
         print("\nTest output")
@@ -225,46 +227,46 @@ def train():
             for key in chosen_tracks:
                 scores.append(gas[key][test_info[i][0]][start: start + num_regions])
             test_output.append(scores)
-        for key in hic_keys:
-            print(key, end=" ")
-            hdf = joblib.load("parsed_hic/" + key)
-            for i, info in enumerate(test_info):
-                try:
-                    hd = hdf[info[0]]
-                    hic_mat = np.zeros((num_hic_bins, num_hic_bins))
-                    start_hic = int((info[1] - half_size))
-                    end_hic = start_hic + input_size
-                    start_row = hd['locus1'].searchsorted(start_hic - hic_bin_size, side='left')
-                    end_row = hd['locus1'].searchsorted(end_hic, side='right')
-                    hd = hd.iloc[start_row:end_row]
-                    # convert start of the input region to the bin number
-                    start_hic = int(start_hic / hic_bin_size)
-                    # subtract start bin from the binned entries in the range [start_row : end_row]
-                    l1 = (np.floor(hd["locus1"].values / hic_bin_size) - start_hic).astype(int)
-                    l2 = (np.floor(hd["locus2"].values / hic_bin_size) - start_hic).astype(int)
-                    hic_score = hd["score"].values
-                    # drop contacts with regions outside the [start_row : end_row] range
-                    lix = (l2 < len(hic_mat)) & (l2 >= 0) & (l1 >= 0)
-                    l1 = l1[lix]
-                    l2 = l2[lix]
-                    hic_score = hic_score[lix]
-                    hic_mat[l1, l2] += hic_score
-                    # hic_mat = hic_mat + hic_mat.T - np.diag(np.diag(hic_mat))
-                    hic_mat = gaussian_filter(hic_mat, sigma=1)
-                    # print(f"original {len(hic_mat.flatten())}")
-                    hic_mat = hic_mat[np.triu_indices_from(hic_mat, k=1)]
-                    # print(f"triu {len(hic_mat.flatten())}")
-                    for hs in range(hic_track_size):
-                        hic_slice = hic_mat[hs * num_regions: (hs + 1) * num_regions].copy()
-                        if len(hic_slice) != num_regions:
-                            hic_slice.resize(num_regions, refcheck=False)
-                        test_output[i].append(hic_slice)
-                except Exception as e:
-                    print(e)
-                    err += 1
-            del hd
-            del hdf
-            gc.collect()
+        # for key in hic_keys:
+        #     print(key, end=" ")
+        #     hdf = joblib.load("parsed_hic/" + key)
+        #     for i, info in enumerate(test_info):
+        #         try:
+        #             hd = hdf[info[0]]
+        #             hic_mat = np.zeros((num_hic_bins, num_hic_bins))
+        #             start_hic = int((info[1] - half_size))
+        #             end_hic = start_hic + input_size
+        #             start_row = hd['locus1'].searchsorted(start_hic - hic_bin_size, side='left')
+        #             end_row = hd['locus1'].searchsorted(end_hic, side='right')
+        #             hd = hd.iloc[start_row:end_row]
+        #             # convert start of the input region to the bin number
+        #             start_hic = int(start_hic / hic_bin_size)
+        #             # subtract start bin from the binned entries in the range [start_row : end_row]
+        #             l1 = (np.floor(hd["locus1"].values / hic_bin_size) - start_hic).astype(int)
+        #             l2 = (np.floor(hd["locus2"].values / hic_bin_size) - start_hic).astype(int)
+        #             hic_score = hd["score"].values
+        #             # drop contacts with regions outside the [start_row : end_row] range
+        #             lix = (l2 < len(hic_mat)) & (l2 >= 0) & (l1 >= 0)
+        #             l1 = l1[lix]
+        #             l2 = l2[lix]
+        #             hic_score = hic_score[lix]
+        #             hic_mat[l1, l2] += hic_score
+        #             # hic_mat = hic_mat + hic_mat.T - np.diag(np.diag(hic_mat))
+        #             hic_mat = gaussian_filter(hic_mat, sigma=1)
+        #             # print(f"original {len(hic_mat.flatten())}")
+        #             hic_mat = hic_mat[np.triu_indices_from(hic_mat, k=1)]
+        #             # print(f"triu {len(hic_mat.flatten())}")
+        #             for hs in range(hic_track_size):
+        #                 hic_slice = hic_mat[hs * num_regions: (hs + 1) * num_regions].copy()
+        #                 if len(hic_slice) != num_regions:
+        #                     hic_slice.resize(num_regions, refcheck=False)
+        #                 test_output[i].append(hic_slice)
+        #         except Exception as e:
+        #             print(e)
+        #             err += 1
+        #     del hd
+        #     del hdf
+        #     gc.collect()
 
         test_output = np.asarray(test_output)
         # print(test_output.shape)
@@ -292,9 +294,9 @@ def train():
         fit_epochs = 1
         with strategy.scope():
             if k == 0:
-                fit_epochs = 20
+                fit_epochs = 10
             else:
-                fit_epochs = 2
+                fit_epochs = 4
             # if k % 9 != 0:
             #     freeze = True
             #     fit_epochs = 4
@@ -323,7 +325,7 @@ def train():
                 if os.path.exists(model_folder + "/" + key):
                     os.remove(model_folder + "/" + key)
                 os.rename(model_folder + "/" + key + "_temp", model_folder + "/" + key)
-            if k == 0:
+            if k == 0 and model_was_created:
                 all_weights = []
                 for i in range(len(chosen_tracks)):
                     all_weights.append(our_model.get_layer("out_row_" + str(i)).get_weights()[0])
@@ -395,24 +397,24 @@ def train():
                         break
                     if pic_count > 10:
                         break
-                print("Drawing contact maps")
-                for h in range(len(hic_keys)):
-                    pic_count = 0
-                    it = len(chosen_tracks) + h * hic_track_size
-                    for i in range(len(predictions)):
-                        mat_gt = recover_shape(output_scores[i][it:it + hic_track_size], num_hic_bins)
-                        mat_pred = recover_shape(predictions[i][it:it + hic_track_size], num_hic_bins)
-                        fig, axs = plt.subplots(2, 1, figsize=(6, 8))
-                        sns.heatmap(mat_pred, linewidth=0.0, ax=axs[0])
-                        axs[0].set_title("Prediction")
-                        sns.heatmap(mat_gt, linewidth=0.0, ax=axs[1])
-                        axs[1].set_title("Ground truth")
-                        plt.tight_layout()
-                        plt.savefig(figures_folder + "/hic/train_track_" + str(i + 1) + "_" + str(hic_keys[h]) + ".png")
-                        plt.close(fig)
-                        pic_count += 1
-                        if pic_count > 5:
-                            break
+                # print("Drawing contact maps")
+                # for h in range(len(hic_keys)):
+                #     pic_count = 0
+                #     it = len(chosen_tracks) + h * hic_track_size
+                #     for i in range(len(predictions)):
+                #         mat_gt = recover_shape(output_scores[i][it:it + hic_track_size], num_hic_bins)
+                #         mat_pred = recover_shape(predictions[i][it:it + hic_track_size], num_hic_bins)
+                #         fig, axs = plt.subplots(2, 1, figsize=(6, 8))
+                #         sns.heatmap(mat_pred, linewidth=0.0, ax=axs[0])
+                #         axs[0].set_title("Prediction")
+                #         sns.heatmap(mat_gt, linewidth=0.0, ax=axs[1])
+                #         axs[1].set_title("Ground truth")
+                #         plt.tight_layout()
+                #         plt.savefig(figures_folder + "/hic/train_track_" + str(i + 1) + "_" + str(hic_keys[h]) + ".png")
+                #         plt.close(fig)
+                #         pic_count += 1
+                #         if pic_count > 5:
+                #             break
 
                 print("Test set")
                 predictions = our_model.predict(test_seq[0:1000], batch_size=1)
@@ -463,24 +465,24 @@ def train():
                     if pic_count > 10:
                         break
 
-                print("Drawing contact maps")
-                for h in range(len(hic_keys)):
-                    pic_count = 0
-                    it = len(chosen_tracks) + h * hic_track_size
-                    for i in range(len(predictions)):
-                        mat_gt = recover_shape(test_output[i][it: it + hic_track_size], num_hic_bins)
-                        mat_pred = recover_shape(predictions[i][it: it + hic_track_size], num_hic_bins)
-                        fig, axs = plt.subplots(2, 1, figsize=(6, 8))
-                        sns.heatmap(mat_pred, linewidth=0.0, ax=axs[0])
-                        axs[0].set_title("Prediction")
-                        sns.heatmap(mat_gt, linewidth=0.0, ax=axs[1])
-                        axs[1].set_title("Ground truth")
-                        plt.tight_layout()
-                        plt.savefig(figures_folder + "/hic/test_track_" + str(i + 1) + "_" + str(hic_keys[h]) + ".png")
-                        plt.close(fig)
-                        pic_count += 1
-                        if pic_count > 5:
-                            break
+                # print("Drawing contact maps")
+                # for h in range(len(hic_keys)):
+                #     pic_count = 0
+                #     it = len(chosen_tracks) + h * hic_track_size
+                #     for i in range(len(predictions)):
+                #         mat_gt = recover_shape(test_output[i][it: it + hic_track_size], num_hic_bins)
+                #         mat_pred = recover_shape(predictions[i][it: it + hic_track_size], num_hic_bins)
+                #         fig, axs = plt.subplots(2, 1, figsize=(6, 8))
+                #         sns.heatmap(mat_pred, linewidth=0.0, ax=axs[0])
+                #         axs[0].set_title("Prediction")
+                #         sns.heatmap(mat_gt, linewidth=0.0, ax=axs[1])
+                #         axs[1].set_title("Ground truth")
+                #         plt.tight_layout()
+                #         plt.savefig(figures_folder + "/hic/test_track_" + str(i + 1) + "_" + str(hic_keys[h]) + ".png")
+                #         plt.close(fig)
+                #         pic_count += 1
+                #         if pic_count > 5:
+                #             break
 
                 # Gene regplot
                 # for c, cell in enumerate(cells):

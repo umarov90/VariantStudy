@@ -20,10 +20,10 @@ def simple_model(input_size, num_regions, cell_num):
     input_shape = (input_size, 4)
     inputs = Input(shape=input_shape)
     x = inputs
-    x = Dropout(0.3)(x)
-    x = resnet_v2(x, 10, 2)
+    x = Dropout(0.2)(x)
+    x = resnet_v2(x, 9, 2)
     num_patches = 79
-    x = Dropout(0.3)(x)
+    x = Dropout(0.5)(x)
 
     # # Encode patches.
     # encoded_patches = PatchEncoder(num_patches, projection_dim)(x)
@@ -89,7 +89,7 @@ def resnet_layer(inputs,
                   kernel_size=kernel_size,
                   strides=strides,
                   padding='same',
-                  use_bias=False,
+                  # use_bias=False,
                   name=name+"conv1d"
                   # kernel_regularizer=l2(1e-6),
                   # activity_regularizer=l2(1e-6)
@@ -113,7 +113,7 @@ def resnet_layer(inputs,
 
 def resnet_v2(input_x, num_stages, num_res_blocks):
     # Start model definition.
-    num_filters_in = 64
+    num_filters_in = 128
 
     # v2 performs Conv2D with BN-ReLU on input before splitting into 2 paths
     x = resnet_layer(inputs=input_x,
