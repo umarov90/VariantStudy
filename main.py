@@ -22,7 +22,7 @@ import pickle
 from scipy import stats
 import matplotlib
 from tensorflow.keras import backend as K
-import tensorflow_addons as tfa
+# import tensorflow_addons as tfa
 import matplotlib.pyplot as plt
 from heapq import nsmallest
 import copy
@@ -36,6 +36,7 @@ matplotlib.use("agg")
 from scipy.ndimage.filters import gaussian_filter
 from tensorflow.keras import mixed_precision
 mixed_precision.set_global_policy('mixed_float16')
+tf.keras.backend.set_floatx('float16')
 
 seed = 0
 random.seed(seed)
@@ -57,7 +58,7 @@ def train():
     num_hic_bins = int(input_size / hic_bin_size)
     num_regions = int(input_size / bin_size)
     mid_bin = math.floor(num_regions / 2)
-    BATCH_SIZE = 1
+    BATCH_SIZE = 2
     strategy = tf.distribute.experimental.MultiWorkerMirroredStrategy()
     # strategy = tf.distribute.MirroredStrategy()
     print('Number of devices: {}'.format(strategy.num_replicas_in_sync))
@@ -320,9 +321,10 @@ def train():
                 #     l.trainable = False
                 # else:
                 l.trainable = True
-            optimizer = tfa.optimizers.AdamW(
-                learning_rate=lr, weight_decay=0.0001
-            )
+            # optimizer = tfa.optimizers.AdamW(
+            #     learning_rate=lr, weight_decay=0.0001
+            # )
+            optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
             our_model.compile(loss="mse", optimizer=optimizer)
 
         print(datetime.now().strftime('[%H:%M:%S] ') + "Training")
