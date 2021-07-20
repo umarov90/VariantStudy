@@ -126,6 +126,8 @@ def parse_tracks(ga, bin_size):
                 max_val = max(np.max(gast[key]), max_val)
             for key in gast.keys():
                 gast[key] = gast[key] / max_val
+            for key in gast.keys():
+                gast[key] = gast[key].astype(np.float16)
             joblib.dump(gast, "parsed_tracks/" + t_name, compress="lz4")
             end = time.time()
             print("Parsed " + t_name + ". Elapsed time: " + str(end - start) + ". Max value: " + str(max_val))
@@ -211,3 +213,35 @@ def get_sequences(input_size, bin_size, chromosomes):
     joblib.dump(test_seq, "pickle/test_seq.gz", compress=3)
 
     return ga, one_hot, train_info, test_info, test_seq
+
+
+def parse_one_track(ga, bin_size, fn):
+    gast = copy.deepcopy(ga)
+    dtypes = {"chr": str, "start": int, "end": int, "score": float}
+    df = pd.read_csv(fn, delim_whitespace=True, names=["chr", "start", "end", "score"],
+                     dtype=dtypes, header=None, index_col=False)
+
+    chrd = list(df["chr"].unique())
+    df["mid"] = (df["start"] + (df["end"] - df["start"]) / 2) / bin_size
+    df = df.astype({"mid": int})
+
+    # group the scores over `key` and gather them in a list
+    grouped_scores = df.groupby("chr").agg(list)
+
+    # for each key, value in the dictionary...
+    for key, val in gast.items():
+        if key not in chrd:
+            continue
+        # first lookup the positions to update and the corresponding scores
+        pos, score = grouped_scores.loc[key, ["mid", "score"]]
+        # fancy indexing
+        gast[key][pos] += score
+
+    max_val = -1
+    for key in gast.keys():
+        gast[key] = np.log(gast[key] + 1)
+        max_val = max(np.max(gast[key]), max_val)
+    for key in gast.keys():
+        gast[key] = gast[key] / max_val
+
+    return gast

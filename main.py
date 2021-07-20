@@ -19,10 +19,10 @@ import numpy as np
 import common as cm
 from pathlib import Path
 import pickle
-from tensorflow.keras.optimizers import Adam
 from scipy import stats
 import matplotlib
 from tensorflow.keras import backend as K
+import tensorflow_addons as tfa
 import matplotlib.pyplot as plt
 from heapq import nsmallest
 import copy
@@ -35,7 +35,12 @@ from datetime import datetime
 matplotlib.use("agg")
 from scipy.ndimage.filters import gaussian_filter
 from tensorflow.keras import mixed_precision
-# mixed_precision.set_global_policy('mixed_float16')
+mixed_precision.set_global_policy('mixed_float16')
+
+seed = 0
+random.seed(seed)
+np.random.seed(seed)
+tf.random.set_seed(seed)
 
 
 def train():
@@ -46,19 +51,19 @@ def train():
     figures_folder = "figures_1"
     input_size = 40000
     half_size = input_size / 2
-    max_shift = 2000
-    bin_size = 1000
+    max_shift = 200
+    bin_size = 200
     hic_bin_size = 10000
     num_hic_bins = int(input_size / hic_bin_size)
     num_regions = int(input_size / bin_size)
     mid_bin = math.floor(num_regions / 2)
-    BATCH_SIZE = 4
+    BATCH_SIZE = 1
     strategy = tf.distribute.experimental.MultiWorkerMirroredStrategy()
     # strategy = tf.distribute.MirroredStrategy()
     print('Number of devices: {}'.format(strategy.num_replicas_in_sync))
     GLOBAL_BATCH_SIZE = BATCH_SIZE * strategy.num_replicas_in_sync
-    STEPS_PER_EPOCH = 6000
-    out_stack_num = 4000
+    STEPS_PER_EPOCH = 4000
+    out_stack_num = 1000
     num_epochs = 10000
     test_chr = "chr1"
     hic_track_size = 1
@@ -114,6 +119,13 @@ def train():
     for name, size in sorted(((name, sys.getsizeof(value)) for name, value in locals().items()),
                              key=lambda x: -x[1])[:10]:
         print("{:>30}: {:>8}".format(name, cm.get_human_readable(size)))
+
+    # gast = parser.parse_one_track(ga, bin_size, "tracks/CAGE.RNA.ctss.adrenal_gland_adult_pool1.CNhs11793.FANTOM5.100nt.bed.gz")
+    # for ti in test_info:
+    #     starttt = int(ti[1] / bin_size)
+    #     aaa = gast[ti[0]][starttt]
+    #     print(aaa)
+
     for k in range(num_epochs):
         print(datetime.now().strftime('[%H:%M:%S] ') + "Epoch " + str(k))
         if k > 0:
@@ -268,12 +280,12 @@ def train():
         #     del hdf
         #     gc.collect()
 
-        test_output = np.asarray(test_output)
+        test_output = np.asarray(test_output).astype(np.float16)
         # print(test_output.shape)
 
         print("")
         print(datetime.now().strftime('[%H:%M:%S] ') + "Problems: " + str(err))
-        output_scores = np.asarray(output_scores)
+        output_scores = np.asarray(output_scores).astype(np.float16)
         input_sequences = np.asarray(input_sequences)
         gc.collect()
         print_memory()
@@ -294,9 +306,9 @@ def train():
         fit_epochs = 1
         with strategy.scope():
             if k == 0:
-                fit_epochs = 10
+                fit_epochs = 6
             else:
-                fit_epochs = 4
+                fit_epochs = 2
             # if k % 9 != 0:
             #     freeze = True
             #     fit_epochs = 4
@@ -308,9 +320,14 @@ def train():
                 #     l.trainable = False
                 # else:
                 l.trainable = True
-            our_model.compile(loss="mse", optimizer=Adam(learning_rate=lr))
+            optimizer = tfa.optimizers.AdamW(
+                learning_rate=lr, weight_decay=0.0001
+            )
+            our_model.compile(loss="mse", optimizer=optimizer)
 
         print(datetime.now().strftime('[%H:%M:%S] ') + "Training")
+        gc.collect()
+        print_memory()
         # if k != 0:
         try:
             train_data = wrap(input_sequences, output_scores, GLOBAL_BATCH_SIZE)
@@ -354,7 +371,7 @@ def train():
             gc.collect()
             continue
 
-        if k % 10 == 0 : # and k != 0
+        if k % 5 == 0 : # and k != 0
             print(datetime.now().strftime('[%H:%M:%S] ') + "Evaluating")
             try:
                 print("Training set")
