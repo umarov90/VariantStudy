@@ -22,7 +22,7 @@ import pickle
 from scipy import stats
 import matplotlib
 from tensorflow.keras import backend as K
-# import tensorflow_addons as tfa
+import tensorflow_addons as tfa
 import matplotlib.pyplot as plt
 from heapq import nsmallest
 import copy
@@ -36,7 +36,6 @@ matplotlib.use("agg")
 from scipy.ndimage.filters import gaussian_filter
 from tensorflow.keras import mixed_precision
 mixed_precision.set_global_policy('mixed_float16')
-tf.keras.backend.set_floatx('float16')
 
 seed = 0
 random.seed(seed)
@@ -58,7 +57,7 @@ def train():
     num_hic_bins = int(input_size / hic_bin_size)
     num_regions = int(input_size / bin_size)
     mid_bin = math.floor(num_regions / 2)
-    BATCH_SIZE = 2
+    BATCH_SIZE = 3
     strategy = tf.distribute.experimental.MultiWorkerMirroredStrategy()
     # strategy = tf.distribute.MirroredStrategy()
     print('Number of devices: {}'.format(strategy.num_replicas_in_sync))
@@ -321,10 +320,8 @@ def train():
                 #     l.trainable = False
                 # else:
                 l.trainable = True
-            # optimizer = tfa.optimizers.AdamW(
-            #     learning_rate=lr, weight_decay=0.0001
-            # )
-            optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
+            optimizer = tfa.optimizers.AdamW(learning_rate=lr, weight_decay=0.0001)
+            # optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
             our_model.compile(loss="mse", optimizer=optimizer)
 
         print(datetime.now().strftime('[%H:%M:%S] ') + "Training")
@@ -392,9 +389,15 @@ def train():
                     print(f"{track_type} correlation : {np.mean(corrs[track_type])}")
 
                 print("Drawing tracks")
-                pic_count = 0
+
+                total_pics = 0
                 for it, ct in enumerate(chosen_tracks):
-                    for i in range(len(predictions)):
+                    if "ctss" not in ct:
+                        continue
+                    pic_count = 0
+                    r = list(range(len(predictions)))
+                    random.shuffle(r)
+                    for i in r:
                         if np.sum(output_scores[i][it]) == 0:
                             continue
                         fig, axs = plt.subplots(2, 1, figsize=(12, 8))
@@ -413,9 +416,13 @@ def train():
                         plt.savefig(figures_folder + "/tracks/train_track_" + str(i + 1) + "_" + str(ct) + ".png")
                         plt.close(fig)
                         pic_count += 1
+                        total_pics += 1
+                        if pic_count > 10:
+                            break
+                    if total_pics > 100:
                         break
-                    if pic_count > 10:
-                        break
+
+
                 # print("Drawing contact maps")
                 # for h in range(len(hic_keys)):
                 #     pic_count = 0

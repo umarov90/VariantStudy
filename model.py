@@ -8,7 +8,7 @@ import tensorflow as tf
 import common as cm
 
 
-projection_dim = 128
+projection_dim = 96
 num_heads = 8
 transformer_units = [
     projection_dim * 2,
@@ -54,6 +54,7 @@ def simple_model(input_size, num_regions, cell_num):
     # Compress
     compress_dim = 2048
     x = Dense(compress_dim, name="latent_vector")(representation)
+    print(x)
     x = LeakyReLU(alpha=0.1)(x)
     # x = Dropout(0.5, input_shape=(None, compress_dim))(x)
 
@@ -113,7 +114,7 @@ def resnet_layer(inputs,
 
 def resnet_v2(input_x, num_stages, num_res_blocks):
     # Start model definition.
-    num_filters_in = 512
+    num_filters_in = 384
 
     # v2 performs Conv2D with BN-ReLU on input before splitting into 2 paths
     x = resnet_layer(inputs=input_x,
