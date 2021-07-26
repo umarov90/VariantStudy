@@ -27,6 +27,7 @@ import matplotlib.pyplot as plt
 from heapq import nsmallest
 import copy
 import seaborn as sns
+from multiprocessing import Pool
 import shutil
 import psutil
 import sys
@@ -34,6 +35,13 @@ import parse_data as parser
 from datetime import datetime
 matplotlib.use("agg")
 from scipy.ndimage.filters import gaussian_filter
+
+# tf.compat.v1.disable_eager_execution()
+physical_devices = tf.config.experimental.list_physical_devices('GPU')
+assert len(physical_devices) > 0, "Not enough GPU hardware devices available"
+for device in physical_devices:
+    config1 = tf.config.experimental.set_memory_growth(device, True)
+
 from tensorflow.keras import mixed_precision
 mixed_precision.set_global_policy('mixed_float16')
 
@@ -44,25 +52,23 @@ tf.random.set_seed(seed)
 
 
 def train():
-    # Apply smoothing to output bins? Ask Hon how to do it best
-    # Turn off bias for all conv1d and try perf after 20.
     model_folder = "model1"
     model_name = "expression_model_1.h5"
     figures_folder = "figures_1"
     input_size = 40000
     half_size = input_size / 2
-    max_shift = 200
     bin_size = 200
+    max_shift = bin_size
     hic_bin_size = 10000
     num_hic_bins = int(input_size / hic_bin_size)
     num_regions = int(input_size / bin_size)
     mid_bin = math.floor(num_regions / 2)
-    BATCH_SIZE = 3
+    BATCH_SIZE = 4
     strategy = tf.distribute.experimental.MultiWorkerMirroredStrategy()
     # strategy = tf.distribute.MirroredStrategy()
     print('Number of devices: {}'.format(strategy.num_replicas_in_sync))
     GLOBAL_BATCH_SIZE = BATCH_SIZE * strategy.num_replicas_in_sync
-    STEPS_PER_EPOCH = 4000
+    STEPS_PER_EPOCH = 8000
     out_stack_num = 1000
     num_epochs = 10000
     test_chr = "chr1"
@@ -82,7 +88,7 @@ def train():
 
     # hic_keys = parser.parse_hic()
     # hic_keys = ["hic_ADAC418_10kb_interactions.txt.bz2"]
-    ga, one_hot, train_info, test_info, test_seq = parser.get_sequences(input_size, bin_size, chromosomes)
+    ga, one_hot, train_info, test_info = parser.get_sequences(input_size, bin_size, chromosomes)
     if Path("pickle/gas_keys.gz").is_file():
         gas_keys = joblib.load("pickle/gas_keys.gz")
     else:
@@ -129,6 +135,7 @@ def train():
     for k in range(num_epochs):
         print(datetime.now().strftime('[%H:%M:%S] ') + "Epoch " + str(k))
         if k > 0:
+            strategy = tf.distribute.experimental.MultiWorkerMirroredStrategy()
             with strategy.scope():
                 our_model = tf.keras.models.load_model(model_folder + "/" + model_name,
                                                        custom_objects={'PatchEncoder': mo.PatchEncoder})
@@ -230,59 +237,6 @@ def train():
         #     gc.collect()
         # print(np.asarray(input_sequences).shape)
         # print(np.asarray(output_scores).shape)
-        print("\nTest output")
-        # preparing test output tracks
-        test_output = []
-        for i in range(len(test_info)):
-            scores = []
-            start = int((test_info[i][1] - half_size) / bin_size)
-            for key in chosen_tracks:
-                scores.append(gas[key][test_info[i][0]][start: start + num_regions])
-            test_output.append(scores)
-        # for key in hic_keys:
-        #     print(key, end=" ")
-        #     hdf = joblib.load("parsed_hic/" + key)
-        #     for i, info in enumerate(test_info):
-        #         try:
-        #             hd = hdf[info[0]]
-        #             hic_mat = np.zeros((num_hic_bins, num_hic_bins))
-        #             start_hic = int((info[1] - half_size))
-        #             end_hic = start_hic + input_size
-        #             start_row = hd['locus1'].searchsorted(start_hic - hic_bin_size, side='left')
-        #             end_row = hd['locus1'].searchsorted(end_hic, side='right')
-        #             hd = hd.iloc[start_row:end_row]
-        #             # convert start of the input region to the bin number
-        #             start_hic = int(start_hic / hic_bin_size)
-        #             # subtract start bin from the binned entries in the range [start_row : end_row]
-        #             l1 = (np.floor(hd["locus1"].values / hic_bin_size) - start_hic).astype(int)
-        #             l2 = (np.floor(hd["locus2"].values / hic_bin_size) - start_hic).astype(int)
-        #             hic_score = hd["score"].values
-        #             # drop contacts with regions outside the [start_row : end_row] range
-        #             lix = (l2 < len(hic_mat)) & (l2 >= 0) & (l1 >= 0)
-        #             l1 = l1[lix]
-        #             l2 = l2[lix]
-        #             hic_score = hic_score[lix]
-        #             hic_mat[l1, l2] += hic_score
-        #             # hic_mat = hic_mat + hic_mat.T - np.diag(np.diag(hic_mat))
-        #             hic_mat = gaussian_filter(hic_mat, sigma=1)
-        #             # print(f"original {len(hic_mat.flatten())}")
-        #             hic_mat = hic_mat[np.triu_indices_from(hic_mat, k=1)]
-        #             # print(f"triu {len(hic_mat.flatten())}")
-        #             for hs in range(hic_track_size):
-        #                 hic_slice = hic_mat[hs * num_regions: (hs + 1) * num_regions].copy()
-        #                 if len(hic_slice) != num_regions:
-        #                     hic_slice.resize(num_regions, refcheck=False)
-        #                 test_output[i].append(hic_slice)
-        #         except Exception as e:
-        #             print(e)
-        #             err += 1
-        #     del hd
-        #     del hdf
-        #     gc.collect()
-
-        test_output = np.asarray(test_output).astype(np.float16)
-        # print(test_output.shape)
-
         print("")
         print(datetime.now().strftime('[%H:%M:%S] ') + "Problems: " + str(err))
         output_scores = np.asarray(output_scores).astype(np.float16)
@@ -305,10 +259,10 @@ def train():
         lr = 0.0001
         fit_epochs = 1
         with strategy.scope():
-            if k == 0:
-                fit_epochs = 6
+            if k == 0 and model_was_created:
+                fit_epochs = 8
             else:
-                fit_epochs = 2
+                fit_epochs = 4
             # if k % 9 != 0:
             #     freeze = True
             #     fit_epochs = 4
@@ -356,18 +310,20 @@ def train():
             gc.collect()
         except Exception as e:
             print(e)
-            print(datetime.now().strftime('[%H:%M:%S] ') + "Error while training. Loading previous model.")
+            print(datetime.now().strftime('[%H:%M:%S] ') + "Error while training.")
+            del our_model
+            del strategy
+            train_data = None
+            gc.collect()
             K.clear_session()
             tf.compat.v1.reset_default_graph()
             gc.collect()
-            time.sleep(5)
-            with strategy.scope():
-                our_model = tf.keras.models.load_model(model_folder + "/" + model_name,
-                                                       custom_objects={'PatchEncoder': mo.PatchEncoder})
+            time.sleep(2)
             input_sequences = None
             output_scores = None
             predictions = None
             gc.collect()
+            time.sleep(2)
             continue
 
         if k % 5 == 0 : # and k != 0
@@ -387,40 +343,40 @@ def train():
                     corrs.setdefault(type, []).append(stats.spearmanr(a, b)[0])
                 for track_type in corrs.keys():
                     print(f"{track_type} correlation : {np.mean(corrs[track_type])}")
-
-                print("Drawing tracks")
-
-                total_pics = 0
-                for it, ct in enumerate(chosen_tracks):
-                    if "ctss" not in ct:
-                        continue
-                    pic_count = 0
-                    r = list(range(len(predictions)))
-                    random.shuffle(r)
-                    for i in r:
-                        if np.sum(output_scores[i][it]) == 0:
-                            continue
-                        fig, axs = plt.subplots(2, 1, figsize=(12, 8))
-                        vector1 = predictions[i][it]
-                        vector2 = output_scores[i][it]
-                        x = range(num_regions)
-                        d1 = {'bin': x, 'expression': vector1}
-                        df1 = pd.DataFrame(d1)
-                        d2 = {'bin': x, 'expression': vector2}
-                        df2 = pd.DataFrame(d2)
-                        sns.lineplot(data=df1, x='bin', y='expression', ax=axs[0])
-                        axs[0].set_title("Prediction")
-                        sns.lineplot(data=df2, x='bin', y='expression', ax=axs[1])
-                        axs[1].set_title("Ground truth")
-                        fig.tight_layout()
-                        plt.savefig(figures_folder + "/tracks/train_track_" + str(i + 1) + "_" + str(ct) + ".png")
-                        plt.close(fig)
-                        pic_count += 1
-                        total_pics += 1
-                        if pic_count > 10:
-                            break
-                    if total_pics > 100:
-                        break
+                #
+                # print("Drawing tracks")
+                #
+                # total_pics = 0
+                # for it, ct in enumerate(chosen_tracks):
+                #     if "ctss" not in ct:
+                #         continue
+                #     pic_count = 0
+                #     r = list(range(len(predictions)))
+                #     random.shuffle(r)
+                #     for i in r:
+                #         if np.sum(output_scores[i][it]) == 0:
+                #             continue
+                #         fig, axs = plt.subplots(2, 1, figsize=(12, 8))
+                #         vector1 = predictions[i][it]
+                #         vector2 = output_scores[i][it]
+                #         x = range(num_regions)
+                #         d1 = {'bin': x, 'expression': vector1}
+                #         df1 = pd.DataFrame(d1)
+                #         d2 = {'bin': x, 'expression': vector2}
+                #         df2 = pd.DataFrame(d2)
+                #         sns.lineplot(data=df1, x='bin', y='expression', ax=axs[0])
+                #         axs[0].set_title("Prediction")
+                #         sns.lineplot(data=df2, x='bin', y='expression', ax=axs[1])
+                #         axs[1].set_title("Ground truth")
+                #         fig.tight_layout()
+                #         plt.savefig(figures_folder + "/tracks/train_track_" + str(i + 1) + "_" + str(ct) + ".png")
+                #         plt.close(fig)
+                #         pic_count += 1
+                #         total_pics += 1
+                #         if pic_count > 10:
+                #             break
+                #     if total_pics > 100:
+                #         break
 
 
                 # print("Drawing contact maps")
@@ -443,19 +399,106 @@ def train():
                 #             break
 
                 print("Test set")
-                predictions = our_model.predict(test_seq[0:1000], batch_size=1)
 
+                print("\nTest output")
+                # preparing test output tracks
+                final_test_pred = []
+                for i in range(len(test_info)):
+                    final_test_pred.append(np.zeros(out_stack_num))
+                test_output = []
+                for shift_val in [-2 * bin_size, -1 * bin_size, 0, bin_size, 2 * bin_size]:
+                    test_seq = []
+                    for i in range(len(test_info)):
+                        start = int(test_info[i][1] + shift_val - half_size)
+                        ns = one_hot[test_info[i][0]][start:start + input_size]
+                        if len(ns) != input_size:
+                            continue
+                        start_bin = int(start / bin_size)
+                        scores = []
+                        for key in chosen_tracks:
+                            scores.append(gas[key][test_info[i][0]][start_bin: start_bin + num_regions])
+                        test_seq.append(ns.copy())
+                        if shift_val == 0:
+                            test_output.append(scores)
+                    # for key in hic_keys:
+                    #     print(key, end=" ")
+                    #     hdf = joblib.load("parsed_hic/" + key)
+                    #     for i, info in enumerate(test_info):
+                    #         try:
+                    #             hd = hdf[info[0]]
+                    #             hic_mat = np.zeros((num_hic_bins, num_hic_bins))
+                    #             start_hic = int((info[1] - half_size))
+                    #             end_hic = start_hic + input_size
+                    #             start_row = hd['locus1'].searchsorted(start_hic - hic_bin_size, side='left')
+                    #             end_row = hd['locus1'].searchsorted(end_hic, side='right')
+                    #             hd = hd.iloc[start_row:end_row]
+                    #             # convert start of the input region to the bin number
+                    #             start_hic = int(start_hic / hic_bin_size)
+                    #             # subtract start bin from the binned entries in the range [start_row : end_row]
+                    #             l1 = (np.floor(hd["locus1"].values / hic_bin_size) - start_hic).astype(int)
+                    #             l2 = (np.floor(hd["locus2"].values / hic_bin_size) - start_hic).astype(int)
+                    #             hic_score = hd["score"].values
+                    #             # drop contacts with regions outside the [start_row : end_row] range
+                    #             lix = (l2 < len(hic_mat)) & (l2 >= 0) & (l1 >= 0)
+                    #             l1 = l1[lix]
+                    #             l2 = l2[lix]
+                    #             hic_score = hic_score[lix]
+                    #             hic_mat[l1, l2] += hic_score
+                    #             # hic_mat = hic_mat + hic_mat.T - np.diag(np.diag(hic_mat))
+                    #             hic_mat = gaussian_filter(hic_mat, sigma=1)
+                    #             # print(f"original {len(hic_mat.flatten())}")
+                    #             hic_mat = hic_mat[np.triu_indices_from(hic_mat, k=1)]
+                    #             # print(f"triu {len(hic_mat.flatten())}")
+                    #             for hs in range(hic_track_size):
+                    #                 hic_slice = hic_mat[hs * num_regions: (hs + 1) * num_regions].copy()
+                    #                 if len(hic_slice) != num_regions:
+                    #                     hic_slice.resize(num_regions, refcheck=False)
+                    #                 test_output[i].append(hic_slice)
+                    #         except Exception as e:
+                    #             print(e)
+                    #             err += 1
+                    #     del hd
+                    #     del hdf
+                    #     gc.collect()
+
+                    for comp in [True, False]:
+                        if comp:
+                            with Pool(4) as p:
+                                rc_arr = p.map(change_seq, test_seq)
+                            test_seq = rc_arr
+                        test_seq = np.asarray(test_seq)
+                        if comp:
+                            correction = 1 * int(shift_val / bin_size)
+                        else:
+                            correction = -1 * int(shift_val / bin_size)
+                        print(f"{shift_val} {comp} predicting")
+                        predictions = our_model.predict(test_seq, batch_size=2)
+                        for i in range(len(test_info)):
+                            for it, ct in enumerate(chosen_tracks):
+                                final_test_pred[i][it] += predictions[i][it][mid_bin + correction - 1] + \
+                                                          predictions[i][it][mid_bin + correction] + \
+                                                          predictions[i][it][mid_bin + correction + 1]
+                        print(f"{shift_val} {comp} finished")
+
+                final_test_pred = np.divide(final_test_pred, 6)
+                test_output = np.asarray(test_output).astype(np.float16)
                 corrs = {}
                 for it, ct in enumerate(chosen_tracks):
                     type = ct[ct.find("tracks_") + len("tracks_"):ct.find(".")]
                     a = []
                     b = []
-                    for i in range(len(predictions)):
-                        a.append(predictions[i][it][mid_bin])
+                    for i in range(len(final_test_pred)):
+                        a.append(final_test_pred[i][it])
                         b.append(test_output[i][it][mid_bin])
                     corrs.setdefault(type, []).append(stats.spearmanr(a, b)[0])
+
                 for track_type in corrs.keys():
                     print(f"{track_type} correlation : {np.mean(corrs[track_type])}")
+
+                with open("result_cage.txt", "w+") as myfile:
+                    for ccc in corrs["CAGE"]:
+                        myfile.write(str(ccc))
+                        myfile.write("\n")
 
                 with open("result.txt", "a+") as myfile:
                     myfile.write(datetime.now().strftime('[%H:%M:%S] ') + "\n")
@@ -465,31 +508,31 @@ def train():
                         myfile.write(str(np.mean(corrs[track_type])) + "\t")
                     myfile.write("\n")
 
-                print("Drawing tracks")
-                pic_count = 0
-                for it, ct in enumerate(chosen_tracks):
-                    for i in range(len(predictions)):
-                        if np.sum(test_output[i][it]) == 0:
-                            continue
-                        fig, axs = plt.subplots(2, 1, figsize=(12, 8))
-                        vector1 = predictions[i][it]
-                        vector2 = test_output[i][it]
-                        x = range(num_regions)
-                        d1 = {'bin': x, 'expression': vector1}
-                        df1 = pd.DataFrame(d1)
-                        d2 = {'bin': x, 'expression': vector2}
-                        df2 = pd.DataFrame(d2)
-                        sns.lineplot(data=df1, x='bin', y='expression', ax=axs[0])
-                        axs[0].set_title("Prediction")
-                        sns.lineplot(data=df2, x='bin', y='expression', ax=axs[1])
-                        axs[1].set_title("Ground truth")
-                        fig.tight_layout()
-                        plt.savefig(figures_folder + "/tracks/test_track_" + str(i + 1) + "_" + str(ct) + ".png")
-                        plt.close(fig)
-                        pic_count += 1
-                        break
-                    if pic_count > 10:
-                        break
+                # print("Drawing tracks")
+                # pic_count = 0
+                # for it, ct in enumerate(chosen_tracks):
+                #     for i in range(len(predictions)):
+                #         if np.sum(test_output[i][it]) == 0:
+                #             continue
+                #         fig, axs = plt.subplots(2, 1, figsize=(12, 8))
+                #         vector1 = predictions[i][it]
+                #         vector2 = test_output[i][it]
+                #         x = range(num_regions)
+                #         d1 = {'bin': x, 'expression': vector1}
+                #         df1 = pd.DataFrame(d1)
+                #         d2 = {'bin': x, 'expression': vector2}
+                #         df2 = pd.DataFrame(d2)
+                #         sns.lineplot(data=df1, x='bin', y='expression', ax=axs[0])
+                #         axs[0].set_title("Prediction")
+                #         sns.lineplot(data=df2, x='bin', y='expression', ax=axs[1])
+                #         axs[1].set_title("Ground truth")
+                #         fig.tight_layout()
+                #         plt.savefig(figures_folder + "/tracks/test_track_" + str(i + 1) + "_" + str(ct) + ".png")
+                #         plt.close(fig)
+                #         pic_count += 1
+                #         break
+                #     if pic_count > 10:
+                #         break
 
                 # print("Drawing contact maps")
                 # for h in range(len(hic_keys)):
@@ -571,7 +614,8 @@ def train():
         input_sequences = None
         output_scores = None
         test_output = None
-        our_model = None
+        del our_model
+        del strategy
         gas = None
         gc.collect()
         K.clear_session()
@@ -605,6 +649,10 @@ def wrap(input_sequences, output_scores, bs):
     options.experimental_distribute.auto_shard_policy = tf.data.experimental.AutoShardPolicy.DATA
     train_data = train_data.with_options(options)
     return train_data
+
+
+def change_seq(x):
+    return cm.rev_comp(x)
 
 
 if __name__ == '__main__':

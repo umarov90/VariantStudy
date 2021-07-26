@@ -27,29 +27,29 @@ def simple_model(input_size, num_regions, cell_num):
     # x = Dropout(0.5)(x)
 
     # # Encode patches.
-    encoded_patches = PatchEncoder(num_patches, projection_dim)(x)
-
-    # Create multiple layers of the Transformer block.
-    for i in range(transformer_layers):
-        # Layer normalization 1.
-        x1 = LayerNormalization(epsilon=1e-6, name="ln_" + str(i) + "_1")(encoded_patches)
-        # Create a multi-head attention layer.
-        attention_output = MultiHeadAttention(
-            num_heads=num_heads, key_dim=projection_dim, dropout=0.1, name="mha_" + str(i)
-        )(x1, x1)
-        # Skip connection 1.
-        x2 = Add()([attention_output, encoded_patches])
-        # Layer normalization 2.
-        x3 = LayerNormalization(epsilon=1e-6, name="ln_" + str(i) + "_2")(x2)
-        # MLP.
-        x3 = mlp(x3, hidden_units=transformer_units, dropout_rate=0.1, name="mlp_" + str(i))
-        # Skip connection 2.
-        encoded_patches = Add()([x3, x2])
-
-    # Create a [batch_size, projection_dim] tensor.
-    representation = LayerNormalization(epsilon=1e-6, name="ln_rep")(encoded_patches)
-    representation = Flatten()(representation)
-    # representation = Dropout(0.2)(representation)
+    # encoded_patches = PatchEncoder(num_patches, projection_dim)(x)
+    #
+    # # Create multiple layers of the Transformer block.
+    # for i in range(transformer_layers):
+    #     # Layer normalization 1.
+    #     x1 = LayerNormalization(epsilon=1e-6, name="ln_" + str(i) + "_1")(encoded_patches)
+    #     # Create a multi-head attention layer.
+    #     attention_output = MultiHeadAttention(
+    #         num_heads=num_heads, key_dim=projection_dim, dropout=0.1, name="mha_" + str(i)
+    #     )(x1, x1)
+    #     # Skip connection 1.
+    #     x2 = Add()([attention_output, encoded_patches])
+    #     # Layer normalization 2.
+    #     x3 = LayerNormalization(epsilon=1e-6, name="ln_" + str(i) + "_2")(x2)
+    #     # MLP.
+    #     x3 = mlp(x3, hidden_units=transformer_units, dropout_rate=0.1, name="mlp_" + str(i))
+    #     # Skip connection 2.
+    #     encoded_patches = Add()([x3, x2])
+    #
+    # # Create a [batch_size, projection_dim] tensor.
+    # representation = LayerNormalization(epsilon=1e-6, name="ln_rep")(encoded_patches)
+    representation = Flatten()(x)
+    # # representation = Dropout(0.2)(representation)
 
     # Compress
     compress_dim = 2048

@@ -86,6 +86,23 @@ def parse_bed(reg_elements, path):
             reg_elements.setdefault(chrn, []).append(chrp)
 
 
+def rev_comp(s):
+    reversed_arr = s[::-1]
+    vals = []
+    for v in reversed_arr:
+        if v[0]:
+            vals.append([False, False, False, True])
+        elif v[1]:
+            vals.append([False, False, True, False])
+        elif v[2]:
+            vals.append([False, True, False, False])
+        elif v[3]:
+            vals.append([True, False, False, False])
+        else:
+            vals.append([False, False, False, False])
+    return np.array(vals, dtype=bool)
+
+
 def nuc_to_ind(nuc):
     nuc = nuc.upper()
     ind = -1

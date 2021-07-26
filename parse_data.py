@@ -148,7 +148,6 @@ def get_sequences(input_size, bin_size, chromosomes):
         one_hot = joblib.load("pickle/one_hot.gz")
         test_info = joblib.load("pickle/test_info.gz")
         train_info = joblib.load("pickle/train_info.gz")
-        test_seq = joblib.load("pickle/test_seq.gz")
     else:
         genes = pd.read_csv("gencode.v38.annotation.gtf.gz",
                             sep="\t", comment='#',
@@ -166,20 +165,13 @@ def get_sequences(input_size, bin_size, chromosomes):
 
         test_info = []
         test_genes = genes.loc[genes['chr'] == "chr1"]
-        test_seq = []
-        half_size = math.floor(input_size / 2)
         for index, row in test_genes.iterrows():
             if row["strand"] == "-":
                 pos = int(row["end"])
             else:
                 pos = int(row["start"])
-            seq = one_hot[row["chr"]][pos - half_size:pos + half_size]
-            if len(seq) != input_size or row["chr"] not in chromosomes:
-                continue
-            test_seq.append(seq)
             test_info.append([row["chr"], pos, row["gene_name"]])
-        test_seq = np.asarray(test_seq)
-        print(f"Test set complete {len(test_seq)}")
+        print(f"Test set complete")
         train_info = []
         train_genes = genes.loc[genes['chr'] != "chr1"]
         for index, row in train_genes.iterrows():
@@ -192,11 +184,10 @@ def get_sequences(input_size, bin_size, chromosomes):
         print("Training set complete")
         joblib.dump(one_hot, "pickle/one_hot.gz", compress=3)
         joblib.dump(test_info, "pickle/test_info.gz", compress=3)
-        joblib.dump(test_seq, "pickle/test_seq.gz", compress=3)
         joblib.dump(train_info, "pickle/train_info.gz", compress=3)
         gc.collect()
 
-    return ga, one_hot, train_info, test_info, test_seq
+    return ga, one_hot, train_info, test_info
 
 
 def parse_one_track(ga, bin_size, fn):
