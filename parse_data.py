@@ -135,7 +135,7 @@ def parse_tracks(ga, bin_size):
     return gas_keys
 
 
-def get_sequences(input_size, bin_size, chromosomes):
+def get_sequences(bin_size, chromosomes):
     if Path("pickle/genome.gz").is_file():
         genome = joblib.load("pickle/genome.gz")
         ga = joblib.load("pickle/ga.gz")
@@ -146,43 +146,30 @@ def get_sequences(input_size, bin_size, chromosomes):
 
     if Path("pickle/one_hot.gz").is_file():
         one_hot = joblib.load("pickle/one_hot.gz")
-        test_info = joblib.load("pickle/test_info.gz")
-        train_info = joblib.load("pickle/train_info.gz")
     else:
-        genes = pd.read_csv("gencode.v38.annotation.gtf.gz",
-                            sep="\t", comment='#',
-                            names=["chr", "h", "type", "start", "end", "m1", "strand", "m2", "info"],
-                            header=None, index_col=False)
-        genes = genes[genes.type == "gene"]
-        genes["gene_name"] = genes["info"].apply(lambda x: re.search('gene_name "(.*)"; level', x).group(1)).copy()
-        genes["gene_type"] = genes["info"].apply(lambda x: re.search('gene_type "(.*)"; gene_name', x).group(1)).copy()
-        genes = genes[genes.gene_type == "protein_coding"]
-        genes.drop(genes.columns.difference(['chr', 'start', "end", "gene_name", "gene_type", "strand"]), 1, inplace=True)
-
         one_hot = {}
         for chromosome in chromosomes:
             one_hot[chromosome] = cm.encode_seq(genome[chromosome])
-
-        test_info = []
-        test_genes = genes.loc[genes['chr'] == "chr1"]
-        for index, row in test_genes.iterrows():
-            if row["strand"] == "-":
-                pos = int(row["end"])
-            else:
-                pos = int(row["start"])
-            test_info.append([row["chr"], pos, row["gene_name"]])
-        print(f"Test set complete")
-        train_info = []
-        train_genes = genes.loc[genes['chr'] != "chr1"]
-        for index, row in train_genes.iterrows():
-            if row["strand"] == "-":
-                pos = int(row["end"])
-            else:
-                pos = int(row["start"])
-            train_info.append([row["chr"], pos, row["gene_name"]])
-
-        print("Training set complete")
         joblib.dump(one_hot, "pickle/one_hot.gz", compress=3)
+
+    if Path("pickle/train_info.gz").is_file():
+        test_info = joblib.load("pickle/test_info.gz")
+        train_info = joblib.load("pickle/train_info.gz")
+    else:
+        genes = pd.read_csv("hg38.gencode_v32.promoter.window.info.tsv",
+                            sep="\t", index_col=False)
+        test_info = []
+        test_genes = genes.loc[(genes['chrom'] == "chr1") & (genes.max_coding_rank == 1)]
+        for index, row in test_genes.iterrows():
+            pos = int(row["start"])
+            test_info.append([row["chrom"], pos, row["geneName_str"], row["geneType_str"]])
+        print(f"Test set complete {len(test_info)}")
+        train_info = []
+        train_genes = genes.loc[(genes['chrom'] != "chr1") & (genes.max_overall_rank == 1)]
+        for index, row in train_genes.iterrows():
+            pos = int(row["start"])
+            train_info.append([row["chrom"], pos, row["geneName_str"], row["geneType_str"]])
+        print(f"Training set complete {len(train_info)}")
         joblib.dump(test_info, "pickle/test_info.gz", compress=3)
         joblib.dump(train_info, "pickle/train_info.gz", compress=3)
         gc.collect()

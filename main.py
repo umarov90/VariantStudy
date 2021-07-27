@@ -63,7 +63,7 @@ def train():
     num_hic_bins = int(input_size / hic_bin_size)
     num_regions = int(input_size / bin_size)
     mid_bin = math.floor(num_regions / 2)
-    BATCH_SIZE = 4
+    BATCH_SIZE = 2
     strategy = tf.distribute.experimental.MultiWorkerMirroredStrategy()
     # strategy = tf.distribute.MirroredStrategy()
     print('Number of devices: {}'.format(strategy.num_replicas_in_sync))
@@ -88,7 +88,7 @@ def train():
 
     # hic_keys = parser.parse_hic()
     # hic_keys = ["hic_ADAC418_10kb_interactions.txt.bz2"]
-    ga, one_hot, train_info, test_info = parser.get_sequences(input_size, bin_size, chromosomes)
+    ga, one_hot, train_info, test_info = parser.get_sequences(bin_size, chromosomes)
     if Path("pickle/gas_keys.gz").is_file():
         gas_keys = joblib.load("pickle/gas_keys.gz")
     else:
@@ -150,12 +150,13 @@ def train():
         output_scores = []
         print(datetime.now().strftime('[%H:%M:%S] ') + "Preparing sequences")
         chosen_tracks = random.sample(gas_keys, out_stack_num) # - len(hic_keys) * (hic_track_size)
-        eval_tracks = pd.read_csv('eval_tracks.tsv', delimiter='\t').values.flatten()
-        for i in range(len(eval_tracks)):
-            for j in range(len(gas_keys)):
-                if eval_tracks[i] in gas_keys[j]:
-                    chosen_tracks[i] = gas_keys[j]
-                    break
+        if k == 0:
+            eval_tracks = pd.read_csv('eval_tracks.tsv', delimiter='\t').values.flatten()
+            for i in range(len(eval_tracks)):
+                for j in range(len(gas_keys)):
+                    if eval_tracks[i] in gas_keys[j]:
+                        chosen_tracks[i] = gas_keys[j]
+                        break
 
         gas = {}
         for i, key in enumerate(chosen_tracks):
@@ -496,6 +497,7 @@ def train():
 
                 final_test_pred = np.divide(final_test_pred, 6)
                 test_output = np.asarray(test_output).astype(np.float16)
+                # All genes corrs
                 corrs = {}
                 for it, ct in enumerate(chosen_tracks):
                     type = ct[ct.find("tracks_") + len("tracks_"):ct.find(".")]
@@ -505,6 +507,22 @@ def train():
                         a.append(final_test_pred[i][it])
                         b.append(test_output[i][it][mid_bin])
                     corrs.setdefault(type, []).append( (stats.spearmanr(a, b)[0], ct) )
+
+                for track_type in corrs.keys():
+                    print(f"{track_type} correlation : {np.mean([i[0] for i in corrs[track_type]])}")
+
+                # Protein coding corrs
+                corrs = {}
+                for it, ct in enumerate(chosen_tracks):
+                    type = ct[ct.find("tracks_") + len("tracks_"):ct.find(".")]
+                    a = []
+                    b = []
+                    for i in range(len(final_test_pred)):
+                        if test_info[i][3] != "protein_coding":
+                            continue
+                        a.append(final_test_pred[i][it])
+                        b.append(test_output[i][it][mid_bin])
+                    corrs.setdefault(type, []).append((stats.spearmanr(a, b)[0], ct))
 
                 for track_type in corrs.keys():
                     print(f"{track_type} correlation : {np.mean([i[0] for i in corrs[track_type]])}")
@@ -671,6 +689,6 @@ def change_seq(x):
 
 if __name__ == '__main__':
     # get the current folder absolute path
-    # os.chdir(open("data_dir").read().strip())
-    os.chdir("/home/acd13586qv/variants")
+    os.chdir(open("data_dir").read().strip())
+    # os.chdir("/home/acd13586qv/variants")
     train()
