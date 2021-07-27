@@ -37,18 +37,18 @@ matplotlib.use("agg")
 from scipy.ndimage.filters import gaussian_filter
 
 # tf.compat.v1.disable_eager_execution()
-physical_devices = tf.config.experimental.list_physical_devices('GPU')
-assert len(physical_devices) > 0, "Not enough GPU hardware devices available"
-for device in physical_devices:
-    config1 = tf.config.experimental.set_memory_growth(device, True)
+# physical_devices = tf.config.experimental.list_physical_devices('GPU')
+# assert len(physical_devices) > 0, "Not enough GPU hardware devices available"
+# for device in physical_devices:
+#     config1 = tf.config.experimental.set_memory_growth(device, True)
 
 from tensorflow.keras import mixed_precision
 mixed_precision.set_global_policy('mixed_float16')
 
-seed = 0
-random.seed(seed)
-np.random.seed(seed)
-tf.random.set_seed(seed)
+# seed = 0
+# random.seed(seed)
+# np.random.seed(seed)
+# tf.random.set_seed(seed)
 
 
 def train():
@@ -100,13 +100,13 @@ def train():
         if Path(model_folder + "/" + model_name).is_file():
             our_model = tf.keras.models.load_model(model_folder + "/" + model_name,
                                                    custom_objects={'PatchEncoder': mo.PatchEncoder})
-            print('Loaded existing model')
+            print('Loaded existing model ' + model_folder + "/" + model_name)
             model_was_created = False
         else:
             our_model = mo.simple_model(input_size, num_regions, out_stack_num)
             Path(model_folder).mkdir(parents=True, exist_ok=True)
             our_model.save(model_folder + "/" + model_name)
-            print("Model saved")
+            print("Model saved " + model_folder + "/" + model_name)
             # joblib.dump(our_model.get_layer("out_row_0").get_weights(), model_folder + "/" + gas_keys[0], compress=3)
             # for i in range(1, len(gas_keys), 1):
             #     shutil.copyfile(model_folder + "/" + gas_keys[0], model_folder + "/" + gas_keys[i])
@@ -150,6 +150,13 @@ def train():
         output_scores = []
         print(datetime.now().strftime('[%H:%M:%S] ') + "Preparing sequences")
         chosen_tracks = random.sample(gas_keys, out_stack_num) # - len(hic_keys) * (hic_track_size)
+        eval_tracks = pd.read_csv('eval_tracks.tsv', delimiter='\t').values.flatten()
+        for i in range(len(eval_tracks)):
+            for j in range(len(gas_keys)):
+                if eval_tracks[i] in gas_keys[j]:
+                    chosen_tracks[i] = gas_keys[j]
+                    break
+
         gas = {}
         for i, key in enumerate(chosen_tracks):
             if k > 0:
@@ -340,9 +347,15 @@ def train():
                     for i in range(len(predictions)):
                         a.append(predictions[i][it][mid_bin])
                         b.append(output_scores[i][it][mid_bin])
-                    corrs.setdefault(type, []).append(stats.spearmanr(a, b)[0])
+                    corrs.setdefault(type, []).append((stats.spearmanr(a, b)[0], ct))
+
                 for track_type in corrs.keys():
-                    print(f"{track_type} correlation : {np.mean(corrs[track_type])}")
+                    print(f"{track_type} correlation : {np.mean([i[0] for i in corrs[track_type]])}")
+
+                with open("result_cage_train.csv", "w+") as myfile:
+                    for ccc in corrs["CAGE"]:
+                        myfile.write(str(ccc[0]) + "," + str(ccc[1]))
+                        myfile.write("\n")
                 #
                 # print("Drawing tracks")
                 #
@@ -406,7 +419,7 @@ def train():
                 for i in range(len(test_info)):
                     final_test_pred.append(np.zeros(out_stack_num))
                 test_output = []
-                for shift_val in [-2 * bin_size, -1 * bin_size, 0, bin_size, 2 * bin_size]:
+                for shift_val in [-1 * bin_size, 0, bin_size]: # -2 * bin_size, -1 * bin_size, 0, bin_size, 2 * bin_size
                     test_seq = []
                     for i in range(len(test_info)):
                         start = int(test_info[i][1] + shift_val - half_size)
@@ -461,7 +474,7 @@ def train():
                     #     del hdf
                     #     gc.collect()
 
-                    for comp in [True, False]:
+                    for comp in [False]:
                         if comp:
                             with Pool(4) as p:
                                 rc_arr = p.map(change_seq, test_seq)
@@ -475,9 +488,9 @@ def train():
                         predictions = our_model.predict(test_seq, batch_size=2)
                         for i in range(len(test_info)):
                             for it, ct in enumerate(chosen_tracks):
-                                final_test_pred[i][it] += predictions[i][it][mid_bin + correction - 1] + \
-                                                          predictions[i][it][mid_bin + correction] + \
-                                                          predictions[i][it][mid_bin + correction + 1]
+                                final_test_pred[i][it] += predictions[i][it][mid_bin + correction] # + \
+                                                          # predictions[i][it][mid_bin + correction] + \
+                                                          # predictions[i][it][mid_bin + correction + 1]
                         print(f"{shift_val} {comp} finished")
 
                 final_test_pred = np.divide(final_test_pred, 6)
@@ -490,14 +503,14 @@ def train():
                     for i in range(len(final_test_pred)):
                         a.append(final_test_pred[i][it])
                         b.append(test_output[i][it][mid_bin])
-                    corrs.setdefault(type, []).append(stats.spearmanr(a, b)[0])
+                    corrs.setdefault(type, []).append( (stats.spearmanr(a, b)[0], ct) )
 
                 for track_type in corrs.keys():
-                    print(f"{track_type} correlation : {np.mean(corrs[track_type])}")
+                    print(f"{track_type} correlation : {np.mean([i[0] for i in corrs[track_type]])}")
 
-                with open("result_cage.txt", "w+") as myfile:
+                with open("result_cage_test.csv", "w+") as myfile:
                     for ccc in corrs["CAGE"]:
-                        myfile.write(str(ccc))
+                        myfile.write(str(ccc[0]) + "," + str(ccc[1]))
                         myfile.write("\n")
 
                 with open("result.txt", "a+") as myfile:
