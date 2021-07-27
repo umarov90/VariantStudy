@@ -318,20 +318,21 @@ def train():
         except Exception as e:
             print(e)
             print(datetime.now().strftime('[%H:%M:%S] ') + "Error while training.")
-            del our_model
-            del strategy
-            train_data = None
-            gc.collect()
-            K.clear_session()
-            tf.compat.v1.reset_default_graph()
-            gc.collect()
-            time.sleep(2)
-            input_sequences = None
-            output_scores = None
-            predictions = None
-            gc.collect()
-            time.sleep(2)
-            continue
+            exit()
+            # del our_model
+            # del strategy
+            # train_data = None
+            # gc.collect()
+            # K.clear_session()
+            # tf.compat.v1.reset_default_graph()
+            # gc.collect()
+            # time.sleep(2)
+            # input_sequences = None
+            # output_scores = None
+            # predictions = None
+            # gc.collect()
+            # time.sleep(2)
+            # continue
 
         if k % 5 == 0 : # and k != 0
             print(datetime.now().strftime('[%H:%M:%S] ') + "Evaluating")
