@@ -159,7 +159,7 @@ def get_sequences(bin_size, chromosomes):
         genes = pd.read_csv("hg38.gencode_v32.promoter.window.info.tsv",
                             sep="\t", index_col=False)
         test_info = []
-        test_genes = genes.loc[(genes['chrom'] == "chr1") & (genes.max_coding_rank == 1)]
+        test_genes = genes.loc[(genes['chrom'] == "chr1") & (genes.max_overall_rank == 1)]
         for index, row in test_genes.iterrows():
             pos = int(row["start"])
             test_info.append([row["chrom"], pos, row["geneName_str"], row["geneType_str"]])

@@ -68,7 +68,7 @@ def train():
     # strategy = tf.distribute.MirroredStrategy()
     print('Number of devices: {}'.format(strategy.num_replicas_in_sync))
     GLOBAL_BATCH_SIZE = BATCH_SIZE * strategy.num_replicas_in_sync
-    STEPS_PER_EPOCH = 8000
+    STEPS_PER_EPOCH = 20
     out_stack_num = 1000
     num_epochs = 10000
     test_chr = "chr1"
@@ -134,11 +134,11 @@ def train():
 
     for k in range(num_epochs):
         print(datetime.now().strftime('[%H:%M:%S] ') + "Epoch " + str(k))
-        if k > 0:
-            strategy = tf.distribute.experimental.MultiWorkerMirroredStrategy()
-            with strategy.scope():
-                our_model = tf.keras.models.load_model(model_folder + "/" + model_name,
-                                                       custom_objects={'PatchEncoder': mo.PatchEncoder})
+        # if k > 0:
+        #     strategy = tf.distribute.experimental.MultiWorkerMirroredStrategy()
+        #     with strategy.scope():
+        #         our_model = tf.keras.models.load_model(model_folder + "/" + model_name,
+        #                                                custom_objects={'PatchEncoder': mo.PatchEncoder})
 
         # rng_state = np.random.get_state()
         # np.random.shuffle(input_sequences)
@@ -256,35 +256,35 @@ def train():
             print("{:>30}: {:>8}".format(name, cm.get_human_readable(size)))
         # input_sequences = input_sequences[:GLOBAL_BATCH_SIZE * STEPS_PER_EPOCH]
         # output_scores = output_scores[:GLOBAL_BATCH_SIZE * STEPS_PER_EPOCH]
-
-        print(datetime.now().strftime('[%H:%M:%S] ') + "Compiling model")
-        # if k < 300:
-        #     lr = 0.0001
-        # elif k < 600:
-        #     lr = 0.00005
-        # else:
-        #     lr = 0.00002
-        lr = 0.0001
-        fit_epochs = 1
-        with strategy.scope():
-            if k == 0 and model_was_created:
-                fit_epochs = 8
-            else:
-                fit_epochs = 4
-            # if k % 9 != 0:
-            #     freeze = True
-            #     fit_epochs = 4
+        if k == 0:
+            print(datetime.now().strftime('[%H:%M:%S] ') + "Compiling model")
+            # if k < 300:
+            #     lr = 0.0001
+            # elif k < 600:
+            #     lr = 0.00005
             # else:
-            #     freeze = False
-            #     fit_epochs = 2
-            for l in our_model.layers:
-                # if "out_row" not in l.name and freeze:
-                #     l.trainable = False
+            #     lr = 0.00002
+            lr = 0.0001
+            fit_epochs = 1
+            with strategy.scope():
+                if k == 0 and model_was_created:
+                    fit_epochs = 8
+                else:
+                    fit_epochs = 4
+                # if k % 9 != 0:
+                #     freeze = True
+                #     fit_epochs = 4
                 # else:
-                l.trainable = True
-            optimizer = tfa.optimizers.AdamW(learning_rate=lr, weight_decay=0.0001)
-            # optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
-            our_model.compile(loss="mse", optimizer=optimizer)
+                #     freeze = False
+                #     fit_epochs = 2
+                for l in our_model.layers:
+                    # if "out_row" not in l.name and freeze:
+                    #     l.trainable = False
+                    # else:
+                    l.trainable = True
+                optimizer = tfa.optimizers.AdamW(learning_rate=lr, weight_decay=0.0001)
+                # optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
+                our_model.compile(loss="mse", optimizer=optimizer)
 
         print(datetime.now().strftime('[%H:%M:%S] ') + "Training")
         gc.collect()
@@ -646,12 +646,13 @@ def train():
         input_sequences = None
         output_scores = None
         test_output = None
-        del our_model
-        del strategy
         gas = None
         gc.collect()
-        K.clear_session()
-        tf.compat.v1.reset_default_graph()
+        # del our_model
+        # del strategy
+        # K.clear_session()
+        # tf.compat.v1.reset_default_graph()
+        # gc.collect()
         print_memory()
         for name, size in sorted(((name, sys.getsizeof(value)) for name, value in locals().items()),
                                  key=lambda x: -x[1])[:10]:
