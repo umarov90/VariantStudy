@@ -37,10 +37,10 @@ matplotlib.use("agg")
 from scipy.ndimage.filters import gaussian_filter
 
 # tf.compat.v1.disable_eager_execution()
-# physical_devices = tf.config.experimental.list_physical_devices('GPU')
-# assert len(physical_devices) > 0, "Not enough GPU hardware devices available"
-# for device in physical_devices:
-#     config1 = tf.config.experimental.set_memory_growth(device, True)
+physical_devices = tf.config.experimental.list_physical_devices('GPU')
+assert len(physical_devices) > 0, "Not enough GPU hardware devices available"
+for device in physical_devices:
+    config1 = tf.config.experimental.set_memory_growth(device, True)
 
 from tensorflow.keras import mixed_precision
 mixed_precision.set_global_policy('mixed_float16')
@@ -52,7 +52,7 @@ mixed_precision.set_global_policy('mixed_float16')
 
 
 def train():
-    model_folder = "model1"
+    model_folder = "model3"
     model_name = "expression_model_1.h5"
     figures_folder = "figures_1"
     input_size = 40000
@@ -68,8 +68,8 @@ def train():
     # strategy = tf.distribute.MirroredStrategy()
     print('Number of devices: {}'.format(strategy.num_replicas_in_sync))
     GLOBAL_BATCH_SIZE = BATCH_SIZE * strategy.num_replicas_in_sync
-    STEPS_PER_EPOCH = 20
-    out_stack_num = 1000
+    STEPS_PER_EPOCH = 10000
+    out_stack_num = 4000
     num_epochs = 10000
     test_chr = "chr1"
     hic_track_size = 1
@@ -98,8 +98,8 @@ def train():
     model_was_created = True
     with strategy.scope():
         if Path(model_folder + "/" + model_name).is_file():
-            our_model = tf.keras.models.load_model(model_folder + "/" + model_name,
-                                                   custom_objects={'PatchEncoder': mo.PatchEncoder})
+            our_model = tf.keras.models.load_model(model_folder + "/" + model_name)
+            # ,custom_objects={'PatchEncoder': mo.PatchEncoder}
             print('Loaded existing model ' + model_folder + "/" + model_name)
             model_was_created = False
         else:
@@ -112,14 +112,15 @@ def train():
             #     shutil.copyfile(model_folder + "/" + gas_keys[0], model_folder + "/" + gas_keys[i])
             print("\nWeights saved")
     # print("0000000000000000000000000000")
-    # our_model_new = mo.simple_model(input_size, num_regions, 200)
-    # for l in our_model_new.layers:
-    #     if "out_row" not in l.name:
-    #         try:
-    #             l.set_weights(our_model.get_layer(l.name).get_weights())
-    #         except Exception as e:
-    #             print(l.name)
-    # our_model = our_model_new
+    # with strategy.scope():
+    #     our_model_new = mo.simple_model(input_size, num_regions, 2000)
+    #     for l in our_model_new.layers:
+    #         if "out_row" not in l.name:
+    #             try:
+    #                 l.set_weights(our_model.get_layer(l.name).get_weights())
+    #             except Exception as e:
+    #                 print(l.name)
+    #     our_model = our_model_new
     # print("0000000000000000000000000000")
     print_memory()
     for name, size in sorted(((name, sys.getsizeof(value)) for name, value in locals().items()),
@@ -131,7 +132,7 @@ def train():
     #     starttt = int(ti[1] / bin_size)
     #     aaa = gast[ti[0]][starttt]
     #     print(aaa)
-
+    # eval_tracks = pd.read_csv('eval_tracks.tsv', delimiter='\t').values.flatten()
     for k in range(num_epochs):
         print(datetime.now().strftime('[%H:%M:%S] ') + "Epoch " + str(k))
         # if k > 0:
@@ -149,20 +150,25 @@ def train():
         input_sequences = []
         output_scores = []
         print(datetime.now().strftime('[%H:%M:%S] ') + "Preparing sequences")
-        chosen_tracks = random.sample(gas_keys, out_stack_num) # - len(hic_keys) * (hic_track_size)
-        if k == 0:
-            eval_tracks = pd.read_csv('eval_tracks.tsv', delimiter='\t').values.flatten()
-            for i in range(len(eval_tracks)):
-                for j in range(len(gas_keys)):
-                    if eval_tracks[i] in gas_keys[j]:
-                        chosen_tracks[i] = gas_keys[j]
-                        break
+        chosen_tracks = random.sample(list(set(gas_keys)), out_stack_num) # - set(eval_tracks)
+        # - len(hic_keys) * (hic_track_size)
+        # if k == 0:
+        # for i in range(len(eval_tracks)):
+        #     for j in range(len(gas_keys)):
+        #         if eval_tracks[i] in gas_keys[j]:
+        #             chosen_tracks[i] = gas_keys[j]
+        #             break
 
         gas = {}
         for i, key in enumerate(chosen_tracks):
+            if i % 500 == 0:
+                print(i, end=" ")
             if k > 0:
-                our_model.get_layer("out_row_" + str(i)).set_weights(joblib.load(model_folder + "/" + key))
+                lw = joblib.load(model_folder + "/" + key)
+                our_model.get_layer("out_row_compress_" + str(i)).set_weights(lw[0])
+                our_model.get_layer("out_row_" + str(i)).set_weights(lw[1])
             gas[key] = joblib.load("parsed_tracks/" + key)
+        print("")
         print(datetime.now().strftime('[%H:%M:%S] ') + "Loaded the tracks")
         err = 0
         rands = []
@@ -256,7 +262,7 @@ def train():
             print("{:>30}: {:>8}".format(name, cm.get_human_readable(size)))
         # input_sequences = input_sequences[:GLOBAL_BATCH_SIZE * STEPS_PER_EPOCH]
         # output_scores = output_scores[:GLOBAL_BATCH_SIZE * STEPS_PER_EPOCH]
-        if k == 0:
+        if k == 0 and model_was_created:
             print(datetime.now().strftime('[%H:%M:%S] ') + "Compiling model")
             # if k < 300:
             #     lr = 0.0001
@@ -265,12 +271,12 @@ def train():
             # else:
             #     lr = 0.00002
             lr = 0.0001
-            fit_epochs = 1
+            fit_epochs = 2
             with strategy.scope():
                 if k == 0 and model_was_created:
-                    fit_epochs = 8
+                    fit_epochs = 2
                 else:
-                    fit_epochs = 4
+                    fit_epochs = 2
                 # if k % 9 != 0:
                 #     freeze = True
                 #     fit_epochs = 4
@@ -298,18 +304,26 @@ def train():
             os.remove(model_folder + "/" + model_name)
             os.rename(model_folder + "/" + model_name + "_temp.h5", model_folder + "/" + model_name)
             for i, key in enumerate(chosen_tracks):
-                joblib.dump(our_model.get_layer("out_row_" + str(i)).get_weights(), model_folder + "/" + key + "_temp",
-                            compress=3)
+                joblib.dump([our_model.get_layer("out_row_compress_" + str(i)).get_weights(),
+                            our_model.get_layer("out_row_" + str(i)).get_weights()],
+                            model_folder + "/" + key + "_temp", compress=3)
                 if os.path.exists(model_folder + "/" + key):
                     os.remove(model_folder + "/" + key)
                 os.rename(model_folder + "/" + key + "_temp", model_folder + "/" + key)
             if k == 0 and model_was_created:
+                all_weights_compress = []
+                for i in range(len(chosen_tracks)):
+                    all_weights_compress.append(our_model.get_layer("out_row_compress_" + str(i)).get_weights()[0])
+                all_weights_compress = np.asarray(all_weights_compress)
+                all_weights_compress = np.mean(all_weights_compress, axis=0)
+
                 all_weights = []
                 for i in range(len(chosen_tracks)):
                     all_weights.append(our_model.get_layer("out_row_" + str(i)).get_weights()[0])
                 all_weights = np.asarray(all_weights)
                 all_weights = np.mean(all_weights, axis=0)
-                joblib.dump([all_weights], model_folder + "/avg", compress=3)
+
+                joblib.dump([[all_weights_compress], [all_weights]], model_folder + "/avg", compress=3)
                 for i in range(len(gas_keys)):
                     if gas_keys[i] in chosen_tracks:
                         continue
@@ -421,7 +435,7 @@ def train():
                 for i in range(len(test_info)):
                     final_test_pred.append(np.zeros(out_stack_num))
                 test_output = []
-                for shift_val in [-1 * bin_size, 0, bin_size]: # -2 * bin_size, -1 * bin_size, 0, bin_size, 2 * bin_size
+                for shift_val in [0]: # -2 * bin_size, -1 * bin_size, 0, bin_size, 2 * bin_size
                     test_seq = []
                     for i in range(len(test_info)):
                         start = int(test_info[i][1] + shift_val - half_size)
@@ -497,7 +511,7 @@ def train():
 
                 final_test_pred = np.divide(final_test_pred, 6)
                 test_output = np.asarray(test_output).astype(np.float16)
-                # All genes corrs
+                print("All genes corrs")
                 corrs = {}
                 for it, ct in enumerate(chosen_tracks):
                     type = ct[ct.find("tracks_") + len("tracks_"):ct.find(".")]
@@ -511,7 +525,7 @@ def train():
                 for track_type in corrs.keys():
                     print(f"{track_type} correlation : {np.mean([i[0] for i in corrs[track_type]])}")
 
-                # Protein coding corrs
+                print("Protein coding corrs")
                 corrs = {}
                 for it, ct in enumerate(chosen_tracks):
                     type = ct[ct.find("tracks_") + len("tracks_"):ct.find(".")]
@@ -537,35 +551,37 @@ def train():
                     for track_type in corrs.keys():
                         myfile.write(str(track_type) + "\t")
                     for track_type in corrs.keys():
-                        myfile.write(str(np.mean(corrs[track_type])) + "\t")
+                        myfile.write(str(np.mean([i[0] for i in corrs[track_type]])) + "\t")
                     myfile.write("\n")
 
-                # print("Drawing tracks")
-                # pic_count = 0
-                # for it, ct in enumerate(chosen_tracks):
-                #     for i in range(len(predictions)):
-                #         if np.sum(test_output[i][it]) == 0:
-                #             continue
-                #         fig, axs = plt.subplots(2, 1, figsize=(12, 8))
-                #         vector1 = predictions[i][it]
-                #         vector2 = test_output[i][it]
-                #         x = range(num_regions)
-                #         d1 = {'bin': x, 'expression': vector1}
-                #         df1 = pd.DataFrame(d1)
-                #         d2 = {'bin': x, 'expression': vector2}
-                #         df2 = pd.DataFrame(d2)
-                #         sns.lineplot(data=df1, x='bin', y='expression', ax=axs[0])
-                #         axs[0].set_title("Prediction")
-                #         sns.lineplot(data=df2, x='bin', y='expression', ax=axs[1])
-                #         axs[1].set_title("Ground truth")
-                #         fig.tight_layout()
-                #         plt.savefig(figures_folder + "/tracks/test_track_" + str(i + 1) + "_" + str(ct) + ".png")
-                #         plt.close(fig)
-                #         pic_count += 1
-                #         break
-                #     if pic_count > 10:
-                #         break
-
+                print("Drawing tracks")
+                pic_count = 0
+                for it, ct in enumerate(chosen_tracks):
+                    if "ctss" not in ct:
+                        continue
+                    for i in range(len(predictions)):
+                        if np.sum(test_output[i][it]) == 0:
+                            continue
+                        fig, axs = plt.subplots(2, 1, figsize=(12, 8))
+                        vector1 = predictions[i][it]
+                        vector2 = test_output[i][it]
+                        x = range(num_regions)
+                        d1 = {'bin': x, 'expression': vector1}
+                        df1 = pd.DataFrame(d1)
+                        d2 = {'bin': x, 'expression': vector2}
+                        df2 = pd.DataFrame(d2)
+                        sns.lineplot(data=df1, x='bin', y='expression', ax=axs[0])
+                        axs[0].set_title("Prediction")
+                        sns.lineplot(data=df2, x='bin', y='expression', ax=axs[1])
+                        axs[1].set_title("Ground truth")
+                        fig.tight_layout()
+                        plt.savefig(figures_folder + "/tracks/test_track_" + str(test_info[i][2]) + "_" + str(ct) + ".png")
+                        plt.close(fig)
+                        pic_count += 1
+                        if i > 20:
+                            break
+                    if pic_count > 100:
+                        break
                 # print("Drawing contact maps")
                 # for h in range(len(hic_keys)):
                 #     pic_count = 0
@@ -690,6 +706,6 @@ def change_seq(x):
 
 if __name__ == '__main__':
     # get the current folder absolute path
-    os.chdir(open("data_dir").read().strip())
-    # os.chdir("/home/acd13586qv/variants")
+    # os.chdir(open("data_dir").read().strip())
+    os.chdir("/home/acd13586qv/variants")
     train()

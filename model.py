@@ -52,7 +52,7 @@ def simple_model(input_size, num_regions, cell_num):
     # # representation = Dropout(0.2)(representation)
 
     # Compress
-    compress_dim = 2048
+    compress_dim = 4096
     x = Dense(compress_dim, name="latent_vector")(representation)
     print(x)
     x = LeakyReLU(alpha=0.1)(x)
@@ -61,7 +61,9 @@ def simple_model(input_size, num_regions, cell_num):
 
     outs = []
     for i in range(cell_num):
-        ol = Dense(num_regions, use_bias=False, name="out_row_"+str(i))(x)
+        ol = Dense(64, use_bias=False, name="out_row_compress_"+str(i))(x)
+        ol = LeakyReLU(alpha=0.1, name="out_row_"+str(i) + "_act")(ol)
+        ol = Dense(num_regions, use_bias=False, name="out_row_" + str(i))(ol)
         outs.append(ol)
         if i % 50 == 0:
             print(i, end=" ")
