@@ -37,10 +37,10 @@ matplotlib.use("agg")
 from scipy.ndimage.filters import gaussian_filter
 
 # tf.compat.v1.disable_eager_execution()
-physical_devices = tf.config.experimental.list_physical_devices('GPU')
-assert len(physical_devices) > 0, "Not enough GPU hardware devices available"
-for device in physical_devices:
-    config1 = tf.config.experimental.set_memory_growth(device, True)
+# physical_devices = tf.config.experimental.list_physical_devices('GPU')
+# assert len(physical_devices) > 0, "Not enough GPU hardware devices available"
+# for device in physical_devices:
+#     config1 = tf.config.experimental.set_memory_growth(device, True)
 
 from tensorflow.keras import mixed_precision
 mixed_precision.set_global_policy('mixed_float16')
