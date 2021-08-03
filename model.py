@@ -61,7 +61,8 @@ def simple_model(input_size, num_regions, cell_num):
 
     # outs = []
     # for i in range(cell_num):
-    #     ol = Dense(num_regions, use_bias=False, name="out_row_" + str(i))(x)
+    #     ol = Conv1D(1, kernel_size=7, use_bias=False, name="out_row_" + str(i))(x)
+    #     ol = tf.reshape(ol, [-1, 151])
     #     outs.append(ol)
     #     if i % 50 == 0:
     #         print(i, end=" ")
@@ -69,8 +70,8 @@ def simple_model(input_size, num_regions, cell_num):
     # x = Dense(cell_num * num_regions)(representation)
     # x = LeakyReLU(alpha=0.1)(x)
     # outputs = Reshape((cell_num, num_regions))(x)
-    # outputs = tf.stack(outs, axis=1)
-    outputs = Conv1D(9373, kernel_size=7, strides=1)(x)
+    # outputs =tf.stack(outs, axis=1)
+    outputs = Conv1D(cell_num, kernel_size=7, strides=1)(x)
     # trailing_axes = [-1, -2]
     # leading = tf.range(tf.rank(x) - len(trailing_axes))
     # trailing = trailing_axes + tf.rank(x)

@@ -52,8 +52,6 @@ mixed_precision.set_global_policy('mixed_float16')
 
 
 def train():
-    global global_parsed_track
-    global global_track_ind
     model_folder = "model4"
     model_name = "expression_model_1.h5"
     figures_folder = "figures_1"
@@ -65,7 +63,7 @@ def train():
     num_hic_bins = int(input_size / hic_bin_size)
     num_regions = 151 # int(input_size / bin_size)
     mid_bin = math.floor(num_regions / 2)
-    BATCH_SIZE = 8
+    BATCH_SIZE = 16
     strategy = tf.distribute.experimental.MultiWorkerMirroredStrategy()
     # strategy = tf.distribute.MirroredStrategy()
     print('Number of devices: {}'.format(strategy.num_replicas_in_sync))
@@ -85,7 +83,7 @@ def train():
     # our_model = mo.simple_model(input_size, num_regions, out_stack_num)
     for i in range(1, 23):
         chromosomes.append("chr" + str(i))
-    ga, one_hot, train_info, test_info, all_seqs = parser.get_sequences(bin_size, chromosomes, input_size, half_size)
+    ga, one_hot, train_info, test_info = parser.get_sequences(bin_size, chromosomes)
     if Path("pickle/gas_keys.gz").is_file():
         gas_keys = joblib.load("pickle/gas_keys.gz")
     else:
@@ -120,6 +118,7 @@ def train():
     #     aaa = gast[ti[0]][starttt]
     #     print(aaa)
     # eval_tracks = pd.read_csv('eval_tracks.tsv', delimiter='\t').values.flatten()
+    chosen_tracks = gas_keys
     for k in range(num_epochs):
         print(datetime.now().strftime('[%H:%M:%S] ') + "Epoch " + str(k))
         # rng_state = np.random.get_state()
@@ -131,7 +130,7 @@ def train():
         input_sequences = []
         output_scores = []
         print(datetime.now().strftime('[%H:%M:%S] ') + "Preparing sequences")
-        chosen_tracks = random.sample(list(set(gas_keys)), out_stack_num) # - set(eval_tracks)
+        # chosen_tracks = random.sample(list(set(gas_keys)), out_stack_num) # - set(eval_tracks)
         # - len(hic_keys) * (hic_track_size)
         # if k == 0:
         # for i in range(len(eval_tracks)):
@@ -164,7 +163,7 @@ def train():
                 if info[0] not in chromosomes:
                     rands.append(-1)
                     continue
-                ns = all_seqs[f"{info[0]}:{info[1]}"]
+                ns = one_hot[info[0]][start:start + input_size]
                 if len(ns) == input_size:
                     rands.append(rand_var)
                 else:
@@ -354,7 +353,7 @@ def train():
                     test_seq = []
                     for info in testinfo_small:
                         start = int(info[1] + shift_val - half_size)
-                        ns = all_seqs[f"{info[0]}:{info[1]}"]
+                        ns = one_hot[info[0]][start:start + input_size]
                         if len(ns) != input_size:
                             continue
                         start_bin = int(info[1] / bin_size) - 75
@@ -571,6 +570,6 @@ def change_seq(x):
 
 if __name__ == '__main__':
     # get the current folder absolute path
-    os.chdir(open("data_dir").read().strip())
-    # os.chdir("/home/acd13586qv/variants")
+    # os.chdir(open("data_dir").read().strip())
+    os.chdir("/home/acd13586qv/variants")
     train()
