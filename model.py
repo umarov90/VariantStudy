@@ -22,7 +22,7 @@ def simple_model(input_size, num_regions, cell_num):
     inputs = Input(shape=input_shape)
     x = inputs
     # x = Dropout(0.2)(x)
-    x = resnet_v2(x, 8, 2)
+    x = resnet_v2(x, 9, 2)
     num_patches = 313
     # x = Dropout(0.5)(x)
 
@@ -48,28 +48,34 @@ def simple_model(input_size, num_regions, cell_num):
     #
     # # Create a [batch_size, projection_dim] tensor.
     # representation = LayerNormalization(epsilon=1e-6, name="ln_rep")(encoded_patches)
-    representation = Flatten()(x)
-    # # representation = Dropout(0.2)(representation)
+    # representation = Flatten()(x)
+    # # # representation = Dropout(0.2)(representation)
+    #
+    # # Compress
+    # compress_dim = 2048
+    # x = Dense(compress_dim, name="latent_vector")(representation)
+    # print(x)
+    # x = LeakyReLU(alpha=0.1)(x)
+    # x = Dropout(0.5, input_shape=(None, compress_dim))(x)
 
-    # Compress
-    compress_dim = 2048
-    x = Dense(compress_dim, name="latent_vector")(representation)
-    print(x)
-    x = LeakyReLU(alpha=0.1)(x)
-    x = Dropout(0.5, input_shape=(None, compress_dim))(x)
 
-
-    outs = []
-    for i in range(cell_num):
-        ol = Dense(num_regions, use_bias=False, name="out_row_" + str(i))(x)
-        outs.append(ol)
-        if i % 50 == 0:
-            print(i, end=" ")
+    # outs = []
+    # for i in range(cell_num):
+    #     ol = Dense(num_regions, use_bias=False, name="out_row_" + str(i))(x)
+    #     outs.append(ol)
+    #     if i % 50 == 0:
+    #         print(i, end=" ")
 
     # x = Dense(cell_num * num_regions)(representation)
     # x = LeakyReLU(alpha=0.1)(x)
     # outputs = Reshape((cell_num, num_regions))(x)
-    outputs = tf.stack(outs, axis=1)
+    # outputs = tf.stack(outs, axis=1)
+    outputs = Conv1D(9373, kernel_size=7, strides=1)(x)
+    # trailing_axes = [-1, -2]
+    # leading = tf.range(tf.rank(x) - len(trailing_axes))
+    # trailing = trailing_axes + tf.rank(x)
+    # new_order = tf.concat([leading, trailing], axis=0)
+    outputs = tf.transpose(outputs, [0, 2, 1])
     outputs = LeakyReLU(alpha=0.1, name="model_final_output", dtype='float32')(outputs)
     print(outputs)
     model = Model(inputs, outputs, name="model")
@@ -79,7 +85,7 @@ def simple_model(input_size, num_regions, cell_num):
 
 def resnet_layer(inputs,
                  num_filters=16,
-                 kernel_size=3,
+                 kernel_size=8,
                  strides=1,
                  activation='relu',
                  batch_normalization=True,

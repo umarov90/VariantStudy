@@ -52,7 +52,9 @@ mixed_precision.set_global_policy('mixed_float16')
 
 
 def train():
-    model_folder = "model3"
+    global global_parsed_track
+    global global_track_ind
+    model_folder = "model4"
     model_name = "expression_model_1.h5"
     figures_folder = "figures_1"
     input_size = 40001
@@ -61,15 +63,15 @@ def train():
     max_shift = 0
     hic_bin_size = 10000
     num_hic_bins = int(input_size / hic_bin_size)
-    num_regions = int(input_size / bin_size)
+    num_regions = 151 # int(input_size / bin_size)
     mid_bin = math.floor(num_regions / 2)
-    BATCH_SIZE = 2
+    BATCH_SIZE = 8
     strategy = tf.distribute.experimental.MultiWorkerMirroredStrategy()
     # strategy = tf.distribute.MirroredStrategy()
     print('Number of devices: {}'.format(strategy.num_replicas_in_sync))
     GLOBAL_BATCH_SIZE = BATCH_SIZE * strategy.num_replicas_in_sync
-    STEPS_PER_EPOCH = 2000
-    out_stack_num = 1000
+    STEPS_PER_EPOCH = 1000
+    out_stack_num = 9373
     num_epochs = 10000
     test_chr = "chr1"
     hic_track_size = 1
@@ -83,7 +85,7 @@ def train():
     # our_model = mo.simple_model(input_size, num_regions, out_stack_num)
     for i in range(1, 23):
         chromosomes.append("chr" + str(i))
-    ga, one_hot, train_info, test_info = parser.get_sequences(bin_size, chromosomes)
+    ga, one_hot, train_info, test_info, all_seqs = parser.get_sequences(bin_size, chromosomes, input_size, half_size)
     if Path("pickle/gas_keys.gz").is_file():
         gas_keys = joblib.load("pickle/gas_keys.gz")
     else:
@@ -102,11 +104,11 @@ def train():
             Path(model_folder).mkdir(parents=True, exist_ok=True)
             our_model.save(model_folder + "/" + model_name)
             print("Model saved " + model_folder + "/" + model_name)
-            joblib.dump(our_model.get_layer("out_row_0").get_weights(),
-                        model_folder + "/" + gas_keys[0], compress=3)
-            for i in range(1, len(gas_keys), 1):
-                shutil.copyfile(model_folder + "/" + gas_keys[0], model_folder + "/" + gas_keys[i])
-            print("\nWeights saved")
+            # joblib.dump(our_model.get_layer("out_row_0").get_weights(),
+            #             model_folder + "/" + gas_keys[0], compress=3)
+            # for i in range(1, len(gas_keys), 1):
+            #     shutil.copyfile(model_folder + "/" + gas_keys[0], model_folder + "/" + gas_keys[i])
+            # print("\nWeights saved")
     print_memory()
     for name, size in sorted(((name, sys.getsizeof(value)) for name, value in locals().items()),
                              key=lambda x: -x[1])[:10]:
@@ -142,9 +144,9 @@ def train():
         for i, key in enumerate(chosen_tracks):
             if i % 500 == 0:
                 print(i, end=" ")
-            if k > 0:
-                lw = joblib.load(model_folder + "/" + key)
-                our_model.get_layer("out_row_" + str(i)).set_weights(lw)
+            # if k > 0:
+            #     lw = joblib.load(model_folder + "/" + key)
+            #     our_model.get_layer("out_row_" + str(i)).set_weights(lw)
             gas[key] = joblib.load("parsed_tracks/" + key)
         print("")
         print(datetime.now().strftime('[%H:%M:%S] ') + "Loaded the tracks")
@@ -162,24 +164,29 @@ def train():
                 if info[0] not in chromosomes:
                     rands.append(-1)
                     continue
-                ns = one_hot[info[0]][start:start + input_size]
+                ns = all_seqs[f"{info[0]}:{info[1]}"]
                 if len(ns) == input_size:
                     rands.append(rand_var)
                 else:
                     rands.append(-1)
                     continue
-                start_bin = int(start / bin_size)
+                start_bin = int(info[1] / bin_size) - 75
                 scores = []
                 for key in chosen_tracks:
+                    # scores.append([info[0], start_bin, start_bin + num_regions])
                     scores.append(gas[key][info[0]][start_bin: start_bin + num_regions])
-                if info[4] == "-":
-                    ns = cm.rev_comp(ns)
                 input_sequences.append(ns)
                 output_scores.append(scores)
             except Exception as e:
                 print(e)
                 err += 1
-        print("")
+        # print("loading in the values")
+        # for i, key in enumerate(chosen_tracks):
+        #     if i % 10 == 0:
+        #         print(i, end=" ")
+        #     parsed_track = joblib.load("parsed_tracks/" + key)
+        #     for s in output_scores:
+        #         s[i] = parsed_track[s[i][0]][s[i][1]:s[i][2]].copy()
         print(datetime.now().strftime('[%H:%M:%S] ') + "Problems: " + str(err))
         output_scores = np.asarray(output_scores).astype(np.float16)
         input_sequences = np.asarray(input_sequences)
@@ -188,11 +195,11 @@ def train():
         for name, size in sorted(((name, sys.getsizeof(value)) for name, value in locals().items()),
                                  key=lambda x: -x[1])[:10]:
             print("{:>30}: {:>8}".format(name, cm.get_human_readable(size)))
-        fit_epochs = 1
+        fit_epochs = 10
         if k == 0 and model_was_created:
-            fit_epochs = 1
+            fit_epochs = 10
         else:
-            fit_epochs = 1
+            fit_epochs = 10
         if k == 0 and model_was_created:
             print(datetime.now().strftime('[%H:%M:%S] ') + "Compiling model")
             # if k < 300:
@@ -229,12 +236,12 @@ def train():
             our_model.save(model_folder + "/" + model_name + "_temp.h5")
             os.remove(model_folder + "/" + model_name)
             os.rename(model_folder + "/" + model_name + "_temp.h5", model_folder + "/" + model_name)
-            for i, key in enumerate(chosen_tracks):
-                joblib.dump(our_model.get_layer("out_row_" + str(i)).get_weights(),
-                            model_folder + "/" + key + "_temp", compress=3)
-                if os.path.exists(model_folder + "/" + key):
-                    os.remove(model_folder + "/" + key)
-                os.rename(model_folder + "/" + key + "_temp", model_folder + "/" + key)
+            # for i, key in enumerate(chosen_tracks):
+            #     joblib.dump(our_model.get_layer("out_row_" + str(i)).get_weights(),
+            #                 model_folder + "/" + key + "_temp", compress=3)
+            #     if os.path.exists(model_folder + "/" + key):
+            #         os.remove(model_folder + "/" + key)
+            #     os.rename(model_folder + "/" + key + "_temp", model_folder + "/" + key)
             del train_data
             gc.collect()
         except Exception as e:
@@ -345,20 +352,26 @@ def train():
                 test_output = []
                 for shift_val in [0]: # -2 * bin_size, -1 * bin_size, 0, bin_size, 2 * bin_size
                     test_seq = []
-                    for i in range(len(testinfo_small)):
-                        start = int(testinfo_small[i][1] + shift_val - half_size)
-                        ns = one_hot[testinfo_small[i][0]][start:start + input_size]
+                    for info in testinfo_small:
+                        start = int(info[1] + shift_val - half_size)
+                        ns = all_seqs[f"{info[0]}:{info[1]}"]
                         if len(ns) != input_size:
                             continue
-                        start_bin = int(start / bin_size)
+                        start_bin = int(info[1] / bin_size) - 75
                         scores = []
                         for key in chosen_tracks:
-                            scores.append(gas[key][testinfo_small[i][0]][start_bin: start_bin + num_regions])
-                        if testinfo_small[i][4] == "-":
-                            ns = cm.rev_comp(ns)
+                            scores.append(gas[key][info[0]][start_bin: start_bin + num_regions])
                         test_seq.append(ns)
                         if shift_val == 0:
                             test_output.append(scores)
+
+                    # print("loading in the values")
+                    # for i, key in enumerate(chosen_tracks):
+                    #     if i % 10 == 0:
+                    #         print(i, end=" ")
+                    #     parsed_track = joblib.load("parsed_tracks/" + key)
+                    #     for s in test_output:
+                    #         s[i] = parsed_track[s[i][0]][s[i][1]:s[i][2]].copy()
 
                     for comp in [False]:
                         if comp:

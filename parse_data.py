@@ -135,7 +135,7 @@ def parse_tracks(ga, bin_size):
     return gas_keys
 
 
-def get_sequences(bin_size, chromosomes):
+def get_sequences(bin_size, chromosomes, input_size, half_size):
     if Path("pickle/genome.gz").is_file():
         genome = joblib.load("pickle/genome.gz")
         ga = joblib.load("pickle/ga.gz")
@@ -177,8 +177,29 @@ def get_sequences(bin_size, chromosomes):
         joblib.dump(test_info, "pickle/test_info.gz", compress=3)
         joblib.dump(train_info, "pickle/train_info.gz", compress=3)
         gc.collect()
+    if Path("pickle/all_seqs.gz").is_file():
+        all_seqs = joblib.load("pickle/all_seqs.gz")
+    else:
+        all_seqs = {}
+        for i, info in enumerate(train_info):
+            start = int(info[1] - half_size)
+            if info[0] not in chromosomes:
+                continue
+            ns = one_hot[info[0]][start:start + input_size]
+            if info[4] == "-":
+                ns = cm.rev_comp(ns)
+            all_seqs[f"{info[0]}:{info[1]}"] = ns
 
-    return ga, one_hot, train_info, test_info
+        for i, info in enumerate(test_info):
+            start = int(info[1] - half_size)
+            if info[0] not in chromosomes:
+                continue
+            ns = one_hot[info[0]][start:start + input_size]
+            if info[4] == "-":
+                ns = cm.rev_comp(ns)
+            all_seqs[f"{info[0]}:{info[1]}"] = ns
+        joblib.dump(all_seqs, "pickle/all_seqs.gz", compress=3)
+    return ga, one_hot, train_info, test_info, all_seqs
 
 
 def parse_one_track(ga, bin_size, fn):
