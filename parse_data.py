@@ -156,19 +156,23 @@ def get_sequences(bin_size, chromosomes):
         test_info = joblib.load("pickle/test_info.gz")
         train_info = joblib.load("pickle/train_info.gz")
     else:
-        genes = pd.read_csv("hg38.gencode_v32.promoter.window.info.tsv",
-                            sep="\t", index_col=False)
+        gene_tss = pd.read_csv("TSS_flank_0.bed",
+                            sep="\t", index_col=False, names=["chrom", "start", "end", "geneID", "score", "strand"])
+        gene_info = pd.read_csv("gene.info.tsv",
+                               sep="\t", index_col=False)
         test_info = []
-        test_genes = genes.loc[(genes['chrom'] == "chr1") & (genes.max_overall_rank == 1)]
+        test_genes = gene_tss.loc[gene_tss['chrom'] == "chr1"]
         for index, row in test_genes.iterrows():
             pos = int(row["start"])
-            test_info.append([row["chrom"], pos, row["geneName_str"], row["geneType_str"]])
+            gene_type = gene_info[gene_info['geneID'] == row["geneID"]]['geneType'].values[0]
+            test_info.append([row["chrom"], pos, row["geneID"], gene_type, row["strand"]])
         print(f"Test set complete {len(test_info)}")
         train_info = []
-        train_genes = genes.loc[(genes['chrom'] != "chr1") & (genes.max_overall_rank == 1)]
+        train_genes = gene_tss.loc[gene_tss['chrom'] != "chr1"]
         for index, row in train_genes.iterrows():
             pos = int(row["start"])
-            train_info.append([row["chrom"], pos, row["geneName_str"], row["geneType_str"]])
+            gene_type = gene_info[gene_info['geneID'] == row["geneID"]]['geneType'].values[0]
+            train_info.append([row["chrom"], pos, row["geneID"], gene_type, row["strand"]])
         print(f"Training set complete {len(train_info)}")
         joblib.dump(test_info, "pickle/test_info.gz", compress=3)
         joblib.dump(train_info, "pickle/train_info.gz", compress=3)

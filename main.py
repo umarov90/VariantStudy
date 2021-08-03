@@ -55,10 +55,10 @@ def train():
     model_folder = "model3"
     model_name = "expression_model_1.h5"
     figures_folder = "figures_1"
-    input_size = 40000
-    half_size = input_size / 2
+    input_size = 40001
+    half_size = int(input_size / 2)
     bin_size = 200
-    max_shift = bin_size
+    max_shift = 0
     hic_bin_size = 10000
     num_hic_bins = int(input_size / hic_bin_size)
     num_regions = int(input_size / bin_size)
@@ -68,8 +68,8 @@ def train():
     # strategy = tf.distribute.MirroredStrategy()
     print('Number of devices: {}'.format(strategy.num_replicas_in_sync))
     GLOBAL_BATCH_SIZE = BATCH_SIZE * strategy.num_replicas_in_sync
-    STEPS_PER_EPOCH = 10000
-    out_stack_num = 4000
+    STEPS_PER_EPOCH = 2000
+    out_stack_num = 1000
     num_epochs = 10000
     test_chr = "chr1"
     hic_track_size = 1
@@ -81,13 +81,8 @@ def train():
 
     chromosomes = ["chrX"] # "chrY"
     # our_model = mo.simple_model(input_size, num_regions, out_stack_num)
-    # aaa = mo.keras_model_memory_usage_in_bytes(our_model, batch_size=1)
-    # print(aaa)
     for i in range(1, 23):
         chromosomes.append("chr" + str(i))
-
-    # hic_keys = parser.parse_hic()
-    # hic_keys = ["hic_ADAC418_10kb_interactions.txt.bz2"]
     ga, one_hot, train_info, test_info = parser.get_sequences(bin_size, chromosomes)
     if Path("pickle/gas_keys.gz").is_file():
         gas_keys = joblib.load("pickle/gas_keys.gz")
@@ -107,21 +102,11 @@ def train():
             Path(model_folder).mkdir(parents=True, exist_ok=True)
             our_model.save(model_folder + "/" + model_name)
             print("Model saved " + model_folder + "/" + model_name)
-            # joblib.dump(our_model.get_layer("out_row_0").get_weights(), model_folder + "/" + gas_keys[0], compress=3)
-            # for i in range(1, len(gas_keys), 1):
-            #     shutil.copyfile(model_folder + "/" + gas_keys[0], model_folder + "/" + gas_keys[i])
+            joblib.dump(our_model.get_layer("out_row_0").get_weights(),
+                        model_folder + "/" + gas_keys[0], compress=3)
+            for i in range(1, len(gas_keys), 1):
+                shutil.copyfile(model_folder + "/" + gas_keys[0], model_folder + "/" + gas_keys[i])
             print("\nWeights saved")
-    # print("0000000000000000000000000000")
-    # with strategy.scope():
-    #     our_model_new = mo.simple_model(input_size, num_regions, 2000)
-    #     for l in our_model_new.layers:
-    #         if "out_row" not in l.name:
-    #             try:
-    #                 l.set_weights(our_model.get_layer(l.name).get_weights())
-    #             except Exception as e:
-    #                 print(l.name)
-    #     our_model = our_model_new
-    # print("0000000000000000000000000000")
     print_memory()
     for name, size in sorted(((name, sys.getsizeof(value)) for name, value in locals().items()),
                              key=lambda x: -x[1])[:10]:
@@ -135,12 +120,6 @@ def train():
     # eval_tracks = pd.read_csv('eval_tracks.tsv', delimiter='\t').values.flatten()
     for k in range(num_epochs):
         print(datetime.now().strftime('[%H:%M:%S] ') + "Epoch " + str(k))
-        # if k > 0:
-        #     strategy = tf.distribute.experimental.MultiWorkerMirroredStrategy()
-        #     with strategy.scope():
-        #         our_model = tf.keras.models.load_model(model_folder + "/" + model_name,
-        #                                                custom_objects={'PatchEncoder': mo.PatchEncoder})
-
         # rng_state = np.random.get_state()
         # np.random.shuffle(input_sequences)
         # np.random.set_state(rng_state)
@@ -165,15 +144,14 @@ def train():
                 print(i, end=" ")
             if k > 0:
                 lw = joblib.load(model_folder + "/" + key)
-                our_model.get_layer("out_row_compress_" + str(i)).set_weights(lw[0])
-                our_model.get_layer("out_row_" + str(i)).set_weights(lw[1])
+                our_model.get_layer("out_row_" + str(i)).set_weights(lw)
             gas[key] = joblib.load("parsed_tracks/" + key)
         print("")
         print(datetime.now().strftime('[%H:%M:%S] ') + "Loaded the tracks")
         err = 0
         rands = []
         for i, info in enumerate(train_info):
-            if len(output_scores) >= GLOBAL_BATCH_SIZE * STEPS_PER_EPOCH:
+            if len(input_sequences) >= GLOBAL_BATCH_SIZE * STEPS_PER_EPOCH:
                 break
             if i % 500 == 0:
                 print(i, end=" ")
@@ -194,63 +172,13 @@ def train():
                 scores = []
                 for key in chosen_tracks:
                     scores.append(gas[key][info[0]][start_bin: start_bin + num_regions])
+                if info[4] == "-":
+                    ns = cm.rev_comp(ns)
                 input_sequences.append(ns)
                 output_scores.append(scores)
             except Exception as e:
                 print(e)
                 err += 1
-        # print(np.asarray(input_sequences).shape)
-        # print(np.asarray(output_scores).shape)
-        # print("\nHi-C")
-        # for key in hic_keys:
-        #     print(key, end=" ")
-        #     hdf = joblib.load("parsed_hic/" + key)
-        #     ni = 0
-        #     for i, info in enumerate(train_info):
-        #         if i >= len(rands):
-        #             break
-        #         try:
-        #             rand_var = rands[i]
-        #             if rand_var == -1:
-        #                 continue
-        #             hd = hdf[info[0]]
-        #             hic_mat = np.zeros((num_hic_bins, num_hic_bins))
-        #             start_hic = int((info[1] + (rand_var - max_shift / 2) - half_size))
-        #             end_hic = start_hic + input_size
-        #             start_row = hd['locus1'].searchsorted(start_hic - hic_bin_size, side='left')
-        #             end_row = hd['locus1'].searchsorted(end_hic, side='right')
-        #             hd = hd.iloc[start_row:end_row]
-        #             # convert start of the input region to the bin number
-        #             start_hic = int(start_hic / hic_bin_size)
-        #             # subtract start bin from the binned entries in the range [start_row : end_row]
-        #             l1 = (np.floor(hd["locus1"].values / hic_bin_size) - start_hic).astype(int)
-        #             l2 = (np.floor(hd["locus2"].values / hic_bin_size) - start_hic).astype(int)
-        #             hic_score = hd["score"].values
-        #             # drop contacts with regions outside the [start_row : end_row] range
-        #             lix = (l2 < len(hic_mat)) & (l2 >= 0) & (l1 >= 0)
-        #             l1 = l1[lix]
-        #             l2 = l2[lix]
-        #             hic_score = hic_score[lix]
-        #             hic_mat[l1, l2] += hic_score
-        #             # hic_mat = hic_mat + hic_mat.T - np.diag(np.diag(hic_mat))
-        #             hic_mat = gaussian_filter(hic_mat, sigma=1)
-        #             # print(f"original {len(hic_mat.flatten())}")
-        #             hic_mat = hic_mat[np.triu_indices_from(hic_mat, k=1)]
-        #             # print(f"triu {len(hic_mat.flatten())}")
-        #             for hs in range(hic_track_size):
-        #                 hic_slice = hic_mat[hs * num_regions: (hs + 1) * num_regions].copy()
-        #                 if len(hic_slice) != num_regions:
-        #                     hic_slice.resize(num_regions, refcheck=False)
-        #                 output_scores[ni].append(hic_slice)
-        #             ni += 1
-        #         except Exception as e:
-        #             print(e)
-        #             err += 1
-        #     del hd
-        #     del hdf
-        #     gc.collect()
-        # print(np.asarray(input_sequences).shape)
-        # print(np.asarray(output_scores).shape)
         print("")
         print(datetime.now().strftime('[%H:%M:%S] ') + "Problems: " + str(err))
         output_scores = np.asarray(output_scores).astype(np.float16)
@@ -260,8 +188,11 @@ def train():
         for name, size in sorted(((name, sys.getsizeof(value)) for name, value in locals().items()),
                                  key=lambda x: -x[1])[:10]:
             print("{:>30}: {:>8}".format(name, cm.get_human_readable(size)))
-        # input_sequences = input_sequences[:GLOBAL_BATCH_SIZE * STEPS_PER_EPOCH]
-        # output_scores = output_scores[:GLOBAL_BATCH_SIZE * STEPS_PER_EPOCH]
+        fit_epochs = 1
+        if k == 0 and model_was_created:
+            fit_epochs = 1
+        else:
+            fit_epochs = 1
         if k == 0 and model_was_created:
             print(datetime.now().strftime('[%H:%M:%S] ') + "Compiling model")
             # if k < 300:
@@ -271,12 +202,7 @@ def train():
             # else:
             #     lr = 0.00002
             lr = 0.0001
-            fit_epochs = 2
             with strategy.scope():
-                if k == 0 and model_was_created:
-                    fit_epochs = 2
-                else:
-                    fit_epochs = 2
                 # if k % 9 != 0:
                 #     freeze = True
                 #     fit_epochs = 4
@@ -304,30 +230,11 @@ def train():
             os.remove(model_folder + "/" + model_name)
             os.rename(model_folder + "/" + model_name + "_temp.h5", model_folder + "/" + model_name)
             for i, key in enumerate(chosen_tracks):
-                joblib.dump([our_model.get_layer("out_row_compress_" + str(i)).get_weights(),
-                            our_model.get_layer("out_row_" + str(i)).get_weights()],
+                joblib.dump(our_model.get_layer("out_row_" + str(i)).get_weights(),
                             model_folder + "/" + key + "_temp", compress=3)
                 if os.path.exists(model_folder + "/" + key):
                     os.remove(model_folder + "/" + key)
                 os.rename(model_folder + "/" + key + "_temp", model_folder + "/" + key)
-            if k == 0 and model_was_created:
-                all_weights_compress = []
-                for i in range(len(chosen_tracks)):
-                    all_weights_compress.append(our_model.get_layer("out_row_compress_" + str(i)).get_weights()[0])
-                all_weights_compress = np.asarray(all_weights_compress)
-                all_weights_compress = np.mean(all_weights_compress, axis=0)
-
-                all_weights = []
-                for i in range(len(chosen_tracks)):
-                    all_weights.append(our_model.get_layer("out_row_" + str(i)).get_weights()[0])
-                all_weights = np.asarray(all_weights)
-                all_weights = np.mean(all_weights, axis=0)
-
-                joblib.dump([[all_weights_compress], [all_weights]], model_folder + "/avg", compress=3)
-                for i in range(len(gas_keys)):
-                    if gas_keys[i] in chosen_tracks:
-                        continue
-                    shutil.copyfile(model_folder + "/avg", model_folder + "/" + gas_keys[i])
             del train_data
             gc.collect()
         except Exception as e:
@@ -429,66 +336,29 @@ def train():
 
                 print("Test set")
 
-                print("\nTest output")
+                random.shuffle(test_info)
+                testinfo_small = test_info[:1000]
                 # preparing test output tracks
                 final_test_pred = []
-                for i in range(len(test_info)):
+                for i in range(len(testinfo_small)):
                     final_test_pred.append(np.zeros(out_stack_num))
                 test_output = []
                 for shift_val in [0]: # -2 * bin_size, -1 * bin_size, 0, bin_size, 2 * bin_size
                     test_seq = []
-                    for i in range(len(test_info)):
-                        start = int(test_info[i][1] + shift_val - half_size)
-                        ns = one_hot[test_info[i][0]][start:start + input_size]
+                    for i in range(len(testinfo_small)):
+                        start = int(testinfo_small[i][1] + shift_val - half_size)
+                        ns = one_hot[testinfo_small[i][0]][start:start + input_size]
                         if len(ns) != input_size:
                             continue
                         start_bin = int(start / bin_size)
                         scores = []
                         for key in chosen_tracks:
-                            scores.append(gas[key][test_info[i][0]][start_bin: start_bin + num_regions])
-                        test_seq.append(ns.copy())
+                            scores.append(gas[key][testinfo_small[i][0]][start_bin: start_bin + num_regions])
+                        if testinfo_small[i][4] == "-":
+                            ns = cm.rev_comp(ns)
+                        test_seq.append(ns)
                         if shift_val == 0:
                             test_output.append(scores)
-                    # for key in hic_keys:
-                    #     print(key, end=" ")
-                    #     hdf = joblib.load("parsed_hic/" + key)
-                    #     for i, info in enumerate(test_info):
-                    #         try:
-                    #             hd = hdf[info[0]]
-                    #             hic_mat = np.zeros((num_hic_bins, num_hic_bins))
-                    #             start_hic = int((info[1] - half_size))
-                    #             end_hic = start_hic + input_size
-                    #             start_row = hd['locus1'].searchsorted(start_hic - hic_bin_size, side='left')
-                    #             end_row = hd['locus1'].searchsorted(end_hic, side='right')
-                    #             hd = hd.iloc[start_row:end_row]
-                    #             # convert start of the input region to the bin number
-                    #             start_hic = int(start_hic / hic_bin_size)
-                    #             # subtract start bin from the binned entries in the range [start_row : end_row]
-                    #             l1 = (np.floor(hd["locus1"].values / hic_bin_size) - start_hic).astype(int)
-                    #             l2 = (np.floor(hd["locus2"].values / hic_bin_size) - start_hic).astype(int)
-                    #             hic_score = hd["score"].values
-                    #             # drop contacts with regions outside the [start_row : end_row] range
-                    #             lix = (l2 < len(hic_mat)) & (l2 >= 0) & (l1 >= 0)
-                    #             l1 = l1[lix]
-                    #             l2 = l2[lix]
-                    #             hic_score = hic_score[lix]
-                    #             hic_mat[l1, l2] += hic_score
-                    #             # hic_mat = hic_mat + hic_mat.T - np.diag(np.diag(hic_mat))
-                    #             hic_mat = gaussian_filter(hic_mat, sigma=1)
-                    #             # print(f"original {len(hic_mat.flatten())}")
-                    #             hic_mat = hic_mat[np.triu_indices_from(hic_mat, k=1)]
-                    #             # print(f"triu {len(hic_mat.flatten())}")
-                    #             for hs in range(hic_track_size):
-                    #                 hic_slice = hic_mat[hs * num_regions: (hs + 1) * num_regions].copy()
-                    #                 if len(hic_slice) != num_regions:
-                    #                     hic_slice.resize(num_regions, refcheck=False)
-                    #                 test_output[i].append(hic_slice)
-                    #         except Exception as e:
-                    #             print(e)
-                    #             err += 1
-                    #     del hd
-                    #     del hdf
-                    #     gc.collect()
 
                     for comp in [False]:
                         if comp:
@@ -502,14 +372,14 @@ def train():
                             correction = -1 * int(shift_val / bin_size)
                         print(f"{shift_val} {comp} predicting")
                         predictions = our_model.predict(test_seq, batch_size=2)
-                        for i in range(len(test_info)):
+                        for i in range(len(testinfo_small)):
                             for it, ct in enumerate(chosen_tracks):
                                 final_test_pred[i][it] += predictions[i][it][mid_bin + correction] # + \
                                                           # predictions[i][it][mid_bin + correction] + \
                                                           # predictions[i][it][mid_bin + correction + 1]
                         print(f"{shift_val} {comp} finished")
 
-                final_test_pred = np.divide(final_test_pred, 6)
+                # final_test_pred = np.divide(final_test_pred, 6)
                 test_output = np.asarray(test_output).astype(np.float16)
                 print("All genes corrs")
                 corrs = {}
@@ -532,7 +402,7 @@ def train():
                     a = []
                     b = []
                     for i in range(len(final_test_pred)):
-                        if test_info[i][3] != "protein_coding":
+                        if testinfo_small[i][3] != "protein_coding":
                             continue
                         a.append(final_test_pred[i][it])
                         b.append(test_output[i][it][mid_bin])
@@ -575,31 +445,13 @@ def train():
                         sns.lineplot(data=df2, x='bin', y='expression', ax=axs[1])
                         axs[1].set_title("Ground truth")
                         fig.tight_layout()
-                        plt.savefig(figures_folder + "/tracks/test_track_" + str(test_info[i][2]) + "_" + str(ct) + ".png")
+                        plt.savefig(figures_folder + "/tracks/test_track_" + str(testinfo_small[i][2]) + "_" + str(ct) + ".png")
                         plt.close(fig)
                         pic_count += 1
                         if i > 20:
                             break
                     if pic_count > 100:
                         break
-                # print("Drawing contact maps")
-                # for h in range(len(hic_keys)):
-                #     pic_count = 0
-                #     it = len(chosen_tracks) + h * hic_track_size
-                #     for i in range(len(predictions)):
-                #         mat_gt = recover_shape(test_output[i][it: it + hic_track_size], num_hic_bins)
-                #         mat_pred = recover_shape(predictions[i][it: it + hic_track_size], num_hic_bins)
-                #         fig, axs = plt.subplots(2, 1, figsize=(6, 8))
-                #         sns.heatmap(mat_pred, linewidth=0.0, ax=axs[0])
-                #         axs[0].set_title("Prediction")
-                #         sns.heatmap(mat_gt, linewidth=0.0, ax=axs[1])
-                #         axs[1].set_title("Ground truth")
-                #         plt.tight_layout()
-                #         plt.savefig(figures_folder + "/hic/test_track_" + str(i + 1) + "_" + str(hic_keys[h]) + ".png")
-                #         plt.close(fig)
-                #         pic_count += 1
-                #         if pic_count > 5:
-                #             break
 
                 # Gene regplot
                 # for c, cell in enumerate(cells):
@@ -706,6 +558,6 @@ def change_seq(x):
 
 if __name__ == '__main__':
     # get the current folder absolute path
-    # os.chdir(open("data_dir").read().strip())
-    os.chdir("/home/acd13586qv/variants")
+    os.chdir(open("data_dir").read().strip())
+    # os.chdir("/home/acd13586qv/variants")
     train()
