@@ -70,8 +70,8 @@ def train():
     # strategy = tf.distribute.MirroredStrategy()
     print('Number of devices: {}'.format(strategy.num_replicas_in_sync))
     GLOBAL_BATCH_SIZE = BATCH_SIZE * strategy.num_replicas_in_sync
-    STEPS_PER_EPOCH = 140
-    out_stack_num = 5000
+    STEPS_PER_EPOCH = 200
+    out_stack_num = 2500
     num_epochs = 10000
     test_chr = "chr1"
     hic_track_size = 1
@@ -99,12 +99,16 @@ def train():
         random.shuffle(gas_keys)
         chosen_tracks = gas_keys
         heads = []
-        head1 = gas_keys[:5000]
-        head2 = gas_keys[5000:]
+        head1 = gas_keys[:2500]
+        head2 = gas_keys[2500:5000]
+        head3 = gas_keys[5000:7500]
+        head4 = gas_keys[7500:]
         random.shuffle(head1)
-        head2.extend(head1[:(5000 - len(head2))])
+        head4.extend(head1[:(2500 - len(head4))])
         heads.append(head1)
         heads.append(head2)
+        heads.append(head3)
+        heads.append(head4)
         joblib.dump(heads, "pickle/heads.gz", compress=3)
 
     model_was_created = True
