@@ -92,34 +92,6 @@ def train():
         gas_keys = parser.parse_tracks(ga, bin_size)
 
     print("Number of tracks: " + str(len(gas_keys)))
-    model_was_created = True
-    with strategy.scope():
-        if Path(model_folder + "/" + model_name).is_file():
-            our_model = tf.keras.models.load_model(model_folder + "/" + model_name)
-            # ,custom_objects={'PatchEncoder': mo.PatchEncoder}
-            print('Loaded existing model ' + model_folder + "/" + model_name)
-            model_was_created = False
-        else:
-            our_model = mo.simple_model(input_size, num_regions, out_stack_num)
-            Path(model_folder).mkdir(parents=True, exist_ok=True)
-            our_model.save(model_folder + "/" + model_name)
-            print("Model saved " + model_folder + "/" + model_name)
-            # joblib.dump(our_model.get_layer("out_row_0").get_weights(),
-            #             model_folder + "/" + gas_keys[0], compress=3)
-            # for i in range(1, len(gas_keys), 1):
-            #     shutil.copyfile(model_folder + "/" + gas_keys[0], model_folder + "/" + gas_keys[i])
-            # print("\nWeights saved")
-    print_memory()
-    for name, size in sorted(((name, sys.getsizeof(value)) for name, value in locals().items()),
-                             key=lambda x: -x[1])[:10]:
-        print("{:>30}: {:>8}".format(name, cm.get_human_readable(size)))
-
-    # gast = parser.parse_one_track(ga, bin_size, "tracks/CAGE.RNA.ctss.adrenal_gland_adult_pool1.CNhs11793.FANTOM5.100nt.bed.gz")
-    # for ti in test_info:
-    #     starttt = int(ti[1] / bin_size)
-    #     aaa = gast[ti[0]][starttt]
-    #     print(aaa)
-    # eval_tracks = pd.read_csv('eval_tracks.tsv', delimiter='\t').values.flatten()
 
     if Path("pickle/heads.gz").is_file():
         heads = joblib.load("pickle/heads.gz")
@@ -134,6 +106,35 @@ def train():
         heads.append(head1)
         heads.append(head2)
         joblib.dump(heads, "pickle/heads.gz", compress=3)
+
+    model_was_created = True
+    with strategy.scope():
+        if Path(model_folder + "/" + model_name).is_file():
+            our_model = tf.keras.models.load_model(model_folder + "/" + model_name)
+            # ,custom_objects={'PatchEncoder': mo.PatchEncoder}
+            print('Loaded existing model ' + model_folder + "/" + model_name)
+            model_was_created = False
+        else:
+            our_model = mo.simple_model(input_size, num_regions, out_stack_num)
+            Path(model_folder).mkdir(parents=True, exist_ok=True)
+            our_model.save(model_folder + "/" + model_name)
+            print("Model saved " + model_folder + "/" + model_name)
+            for head_id in range(len(heads)):
+                joblib.dump(our_model.get_layer("last_conv1d").get_weights(),
+                            model_folder + "/head" + str(head_id), compress=3)
+            print("Heads saved")
+    print_memory()
+    for name, size in sorted(((name, sys.getsizeof(value)) for name, value in locals().items()),
+                             key=lambda x: -x[1])[:10]:
+        print("{:>30}: {:>8}".format(name, cm.get_human_readable(size)))
+
+    # gast = parser.parse_one_track(ga, bin_size, "tracks/CAGE.RNA.ctss.adrenal_gland_adult_pool1.CNhs11793.FANTOM5.100nt.bed.gz")
+    # for ti in test_info:
+    #     starttt = int(ti[1] / bin_size)
+    #     aaa = gast[ti[0]][starttt]
+    #     print(aaa)
+    # eval_tracks = pd.read_csv('eval_tracks.tsv', delimiter='\t').values.flatten()
+
 
     for k in range(num_epochs):
         print(datetime.now().strftime('[%H:%M:%S] ') + "Epoch " + str(k))
