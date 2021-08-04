@@ -70,7 +70,7 @@ def train():
     # strategy = tf.distribute.MirroredStrategy()
     print('Number of devices: {}'.format(strategy.num_replicas_in_sync))
     GLOBAL_BATCH_SIZE = BATCH_SIZE * strategy.num_replicas_in_sync
-    STEPS_PER_EPOCH = 200
+    STEPS_PER_EPOCH = 140
     out_stack_num = 5000
     num_epochs = 10000
     test_chr = "chr1"
@@ -148,7 +148,7 @@ def train():
 
         input_sequences = []
         output_scores = []
-        print(datetime.now().strftime('[%H:%M:%S] ') + "Preparing sequences")
+        print(datetime.now().strftime('[%H:%M:%S] ') + "Loading the tracks")
         # chosen_tracks = random.sample(list(set(gas_keys)), out_stack_num) # - set(eval_tracks)
         # - len(hic_keys) * (hic_track_size)
         # if k == 0:
@@ -165,7 +165,7 @@ def train():
                 print(i, end=" ")
             gas[key] = joblib.load("parsed_tracks/" + key)
         print("")
-        print(datetime.now().strftime('[%H:%M:%S] ') + "Loaded the tracks")
+        print(datetime.now().strftime('[%H:%M:%S] ') + "Preparing sequences")
         err = 0
         rands = []
         for i, info in enumerate(train_info):
@@ -203,8 +203,11 @@ def train():
         #     parsed_track = joblib.load("parsed_tracks/" + key)
         #     for s in output_scores:
         #         s[i] = parsed_track[s[i][0]][s[i][1]:s[i][2]].copy()
+        print("")
         print(datetime.now().strftime('[%H:%M:%S] ') + "Problems: " + str(err))
-        output_scores = np.asarray(output_scores).astype(np.float16)
+        gc.collect()
+        print_memory()
+        output_scores = np.asarray(output_scores, dtype=np.float16)
         input_sequences = np.asarray(input_sequences)
         gc.collect()
         print_memory()
