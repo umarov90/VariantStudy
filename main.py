@@ -52,6 +52,8 @@ mixed_precision.set_global_policy('mixed_float16')
 
 
 def train():
+    # How does enformer handle strands???
+    # read training notebook
     model_folder = "model4"
     model_name = "expression_model_1.h5"
     figures_folder = "figures_1"
@@ -63,13 +65,13 @@ def train():
     num_hic_bins = int(input_size / hic_bin_size)
     num_regions = 151 # int(input_size / bin_size)
     mid_bin = math.floor(num_regions / 2)
-    BATCH_SIZE = 16
+    BATCH_SIZE = 32
     strategy = tf.distribute.experimental.MultiWorkerMirroredStrategy()
     # strategy = tf.distribute.MirroredStrategy()
     print('Number of devices: {}'.format(strategy.num_replicas_in_sync))
     GLOBAL_BATCH_SIZE = BATCH_SIZE * strategy.num_replicas_in_sync
-    STEPS_PER_EPOCH = 1000
-    out_stack_num = 9373
+    STEPS_PER_EPOCH = 200
+    out_stack_num = 5000
     num_epochs = 10000
     test_chr = "chr1"
     hic_track_size = 1
@@ -118,9 +120,25 @@ def train():
     #     aaa = gast[ti[0]][starttt]
     #     print(aaa)
     # eval_tracks = pd.read_csv('eval_tracks.tsv', delimiter='\t').values.flatten()
-    chosen_tracks = gas_keys
+
+    if Path("pickle/heads.gz").is_file():
+        heads = joblib.load("pickle/heads.gz")
+    else:
+        random.shuffle(gas_keys)
+        chosen_tracks = gas_keys
+        heads = []
+        head1 = gas_keys[:5000]
+        head2 = gas_keys[5000:]
+        random.shuffle(head1)
+        head2.extend(head1[:(5000 - len(head2))])
+        heads.append(head1)
+        heads.append(head2)
+        joblib.dump(heads, "pickle/heads.gz", compress=3)
+
     for k in range(num_epochs):
         print(datetime.now().strftime('[%H:%M:%S] ') + "Epoch " + str(k))
+        head_id = k % len(heads)
+        chosen_tracks = heads[head_id]
         # rng_state = np.random.get_state()
         # np.random.shuffle(input_sequences)
         # np.random.set_state(rng_state)
@@ -138,14 +156,12 @@ def train():
         #         if eval_tracks[i] in gas_keys[j]:
         #             chosen_tracks[i] = gas_keys[j]
         #             break
-
+        if k > 0 or not model_was_created:
+            our_model.get_layer("last_conv1d").set_weights(joblib.load(model_folder + "/head" + str(head_id)))
         gas = {}
         for i, key in enumerate(chosen_tracks):
             if i % 500 == 0:
                 print(i, end=" ")
-            # if k > 0:
-            #     lw = joblib.load(model_folder + "/" + key)
-            #     our_model.get_layer("out_row_" + str(i)).set_weights(lw)
             gas[key] = joblib.load("parsed_tracks/" + key)
         print("")
         print(datetime.now().strftime('[%H:%M:%S] ') + "Loaded the tracks")
@@ -194,11 +210,11 @@ def train():
         for name, size in sorted(((name, sys.getsizeof(value)) for name, value in locals().items()),
                                  key=lambda x: -x[1])[:10]:
             print("{:>30}: {:>8}".format(name, cm.get_human_readable(size)))
-        fit_epochs = 10
+        fit_epochs = 4
         if k == 0 and model_was_created:
-            fit_epochs = 10
+            fit_epochs = 4
         else:
-            fit_epochs = 10
+            fit_epochs = 4
         if k == 0 and model_was_created:
             print(datetime.now().strftime('[%H:%M:%S] ') + "Compiling model")
             # if k < 300:
@@ -235,12 +251,11 @@ def train():
             our_model.save(model_folder + "/" + model_name + "_temp.h5")
             os.remove(model_folder + "/" + model_name)
             os.rename(model_folder + "/" + model_name + "_temp.h5", model_folder + "/" + model_name)
-            # for i, key in enumerate(chosen_tracks):
-            #     joblib.dump(our_model.get_layer("out_row_" + str(i)).get_weights(),
-            #                 model_folder + "/" + key + "_temp", compress=3)
-            #     if os.path.exists(model_folder + "/" + key):
-            #         os.remove(model_folder + "/" + key)
-            #     os.rename(model_folder + "/" + key + "_temp", model_folder + "/" + key)
+            joblib.dump(our_model.get_layer("last_conv1d").get_weights(),
+                        model_folder + "/head" + str(head_id) + "_temp", compress=3)
+            if os.path.exists(model_folder + "/head" + str(head_id)):
+                os.remove(model_folder + "/head" + str(head_id))
+            os.rename(model_folder + "/head" + str(head_id) + "_temp", model_folder + "/head" + str(head_id))
             del train_data
             gc.collect()
         except Exception as e:

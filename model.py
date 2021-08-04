@@ -71,7 +71,7 @@ def simple_model(input_size, num_regions, cell_num):
     # x = LeakyReLU(alpha=0.1)(x)
     # outputs = Reshape((cell_num, num_regions))(x)
     # outputs =tf.stack(outs, axis=1)
-    outputs = Conv1D(cell_num, kernel_size=7, strides=1)(x)
+    outputs = Conv1D(cell_num, kernel_size=7, strides=1, name="last_conv1d")(x)
     # trailing_axes = [-1, -2]
     # leading = tf.range(tf.rank(x) - len(trailing_axes))
     # trailing = trailing_axes + tf.rank(x)
