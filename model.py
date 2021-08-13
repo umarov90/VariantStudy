@@ -64,7 +64,7 @@ def simple_model(input_size, num_regions, cell_num):
     target_length = 200
     trim = (representation.shape[-2] - target_length) // 2
     representation = representation[..., trim:-trim, :]
-    x = Conv1D(2048, kernel_size=1, strides=1, name="pointwise", activation="relu")(representation)
+    x = Conv1D(2048, kernel_size=1, strides=1, name="pointwise", activation=tf.nn.gelu)(representation)
     outputs = Conv1D(cell_num, kernel_size=1, strides=1, name="last_conv1d")(x)
     # trailing_axes = [-1, -2]
     # leading = tf.range(tf.rank(x) - len(trailing_axes))

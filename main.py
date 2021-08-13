@@ -64,8 +64,9 @@ def train():
     hic_bin_size = 10000
     num_hic_bins = int(input_size / hic_bin_size)
     num_regions = 201 # int(input_size / bin_size)
+    half_num_regions = 100
     mid_bin = math.floor(num_regions / 2)
-    BATCH_SIZE = 8
+    BATCH_SIZE = 4
     out_stack_num = 2500
     # our_model = mo.simple_model(input_size, num_regions, out_stack_num)
 
@@ -192,7 +193,7 @@ def train():
                 else:
                     rands.append(-1)
                     continue
-                start_bin = int(info[1] / bin_size) - 75
+                start_bin = int(info[1] / bin_size) - half_num_regions
                 scores = []
                 for key in chosen_tracks:
                     # scores.append([info[0], start_bin, start_bin + num_regions])
@@ -381,7 +382,7 @@ def train():
                         ns = one_hot[info[0]][start:start + input_size]
                         if len(ns) != input_size:
                             continue
-                        start_bin = int(info[1] / bin_size) - 75
+                        start_bin = int(info[1] / bin_size) - half_num_regions
                         scores = []
                         for key in chosen_tracks:
                             scores.append(gas[key][info[0]][start_bin: start_bin + num_regions])
