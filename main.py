@@ -54,24 +54,26 @@ mixed_precision.set_global_policy('mixed_float16')
 def train():
     # How does enformer handle strands???
     # read training notebook
-    model_folder = "model4"
+    model_folder = "model1"
     model_name = "expression_model_1.h5"
     figures_folder = "figures_1"
-    input_size = 40001
+    input_size = 80001
     half_size = int(input_size / 2)
     bin_size = 200
     max_shift = 0
     hic_bin_size = 10000
     num_hic_bins = int(input_size / hic_bin_size)
-    num_regions = 151 # int(input_size / bin_size)
+    num_regions = 201 # int(input_size / bin_size)
     mid_bin = math.floor(num_regions / 2)
-    BATCH_SIZE = 32
+    BATCH_SIZE = 8
+    out_stack_num = 2500
+    # our_model = mo.simple_model(input_size, num_regions, out_stack_num)
+
     strategy = tf.distribute.experimental.MultiWorkerMirroredStrategy()
     # strategy = tf.distribute.MirroredStrategy()
     print('Number of devices: {}'.format(strategy.num_replicas_in_sync))
     GLOBAL_BATCH_SIZE = BATCH_SIZE * strategy.num_replicas_in_sync
     STEPS_PER_EPOCH = 200
-    out_stack_num = 2500
     num_epochs = 10000
     test_chr = "chr1"
     hic_track_size = 1
@@ -82,7 +84,7 @@ def train():
     Path(figures_folder + "/" + "hic").mkdir(parents=True, exist_ok=True)
 
     chromosomes = ["chrX"] # "chrY"
-    # our_model = mo.simple_model(input_size, num_regions, out_stack_num)
+
     for i in range(1, 23):
         chromosomes.append("chr" + str(i))
     ga, one_hot, train_info, test_info = parser.get_sequences(bin_size, chromosomes)

@@ -26,52 +26,46 @@ def simple_model(input_size, num_regions, cell_num):
     num_patches = 313
     # x = Dropout(0.5)(x)
 
-    # # Encode patches.
-    # encoded_patches = PatchEncoder(num_patches, projection_dim)(x)
-    #
-    # # Create multiple layers of the Transformer block.
-    # for i in range(transformer_layers):
-    #     # Layer normalization 1.
-    #     x1 = LayerNormalization(epsilon=1e-6, name="ln_" + str(i) + "_1")(encoded_patches)
-    #     # Create a multi-head attention layer.
-    #     attention_output = MultiHeadAttention(
-    #         num_heads=num_heads, key_dim=projection_dim, dropout=0.1, name="mha_" + str(i)
-    #     )(x1, x1)
-    #     # Skip connection 1.
-    #     x2 = Add()([attention_output, encoded_patches])
-    #     # Layer normalization 2.
-    #     x3 = LayerNormalization(epsilon=1e-6, name="ln_" + str(i) + "_2")(x2)
-    #     # MLP.
-    #     x3 = mlp(x3, hidden_units=transformer_units, dropout_rate=0.1, name="mlp_" + str(i))
-    #     # Skip connection 2.
-    #     encoded_patches = Add()([x3, x2])
-    #
-    # # Create a [batch_size, projection_dim] tensor.
-    # representation = LayerNormalization(epsilon=1e-6, name="ln_rep")(encoded_patches)
+    # Encode patches.
+    encoded_patches = PatchEncoder(num_patches, projection_dim)(x)
+
+    # Create multiple layers of the Transformer block.
+    for i in range(transformer_layers):
+        # Layer normalization 1.
+        x1 = LayerNormalization(epsilon=1e-6, name="ln_" + str(i) + "_1")(encoded_patches)
+        # Create a multi-head attention layer.
+        attention_output = MultiHeadAttention(
+            num_heads=num_heads, key_dim=projection_dim, dropout=0.1, name="mha_" + str(i)
+        )(x1, x1)
+        # Skip connection 1.
+        x2 = Add()([attention_output, encoded_patches])
+        # Layer normalization 2.
+        x3 = LayerNormalization(epsilon=1e-6, name="ln_" + str(i) + "_2")(x2)
+        # MLP.
+        x3 = mlp(x3, hidden_units=transformer_units, dropout_rate=0.1, name="mlp_" + str(i))
+        # Skip connection 2.
+        encoded_patches = Add()([x3, x2])
+
+    # Create a [batch_size, projection_dim] tensor.
+    representation = LayerNormalization(epsilon=1e-6, name="ln_rep")(encoded_patches)
     # representation = Flatten()(x)
-    # # # representation = Dropout(0.2)(representation)
-    #
-    # # Compress
+
+    # Compress
     # compress_dim = 2048
     # x = Dense(compress_dim, name="latent_vector")(representation)
     # print(x)
     # x = LeakyReLU(alpha=0.1)(x)
     # x = Dropout(0.5, input_shape=(None, compress_dim))(x)
 
-
-    # outs = []
-    # for i in range(cell_num):
-    #     ol = Conv1D(1, kernel_size=7, use_bias=False, name="out_row_" + str(i))(x)
-    #     ol = tf.reshape(ol, [-1, 151])
-    #     outs.append(ol)
-    #     if i % 50 == 0:
-    #         print(i, end=" ")
-
     # x = Dense(cell_num * num_regions)(representation)
     # x = LeakyReLU(alpha=0.1)(x)
     # outputs = Reshape((cell_num, num_regions))(x)
     # outputs =tf.stack(outs, axis=1)
-    outputs = Conv1D(cell_num, kernel_size=7, strides=1, name="last_conv1d")(x)
+    target_length = 200
+    trim = (representation.shape[-2] - target_length) // 2
+    representation = representation[..., trim:-trim, :]
+    x = Conv1D(2048, kernel_size=1, strides=1, name="pointwise", activation="relu")(representation)
+    outputs = Conv1D(cell_num, kernel_size=1, strides=1, name="last_conv1d")(x)
     # trailing_axes = [-1, -2]
     # leading = tf.range(tf.rank(x) - len(trailing_axes))
     # trailing = trailing_axes + tf.rank(x)
@@ -184,8 +178,7 @@ def resnet_v2(input_x, num_stages, num_res_blocks):
 
 def mlp(x, hidden_units, dropout_rate, name):
     for units in hidden_units:
-        x = Dense(units, name=name + str(units))(x)
-        x = LeakyReLU(alpha=0.1)(x)
+        x = Dense(units, name=name + str(units), activation=tf.nn.gelu)(x)
         x = Dropout(dropout_rate)(x)
     return x
 
