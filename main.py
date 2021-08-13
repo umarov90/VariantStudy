@@ -117,7 +117,7 @@ def train():
     model_was_created = True
     with strategy.scope():
         if Path(model_folder + "/" + model_name).is_file():
-            our_model = tf.keras.models.load_model(model_folder + "/" + model_name)
+            our_model = tf.keras.models.load_model(model_folder + "/" + model_name, custom_objects={'PatchEncoder': mo.PatchEncoder})
             # ,custom_objects={'PatchEncoder': mo.PatchEncoder}
             print('Loaded existing model ' + model_folder + "/" + model_name)
             model_was_created = False
