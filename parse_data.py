@@ -165,6 +165,9 @@ def get_sequences(bin_size, chromosomes):
         for index, row in test_genes.iterrows():
             pos = int(row["start"])
             gene_type = gene_info[gene_info['geneID'] == row["geneID"]]['geneType'].values[0]
+            gene_rank = gene_info[gene_info['geneID'] == row["geneID"]]['geneType'].values[0]
+            if gene_rank != 1:
+                continue
             test_info.append([row["chrom"], pos, row["geneID"], gene_type, row["strand"]])
         print(f"Test set complete {len(test_info)}")
         train_info = []

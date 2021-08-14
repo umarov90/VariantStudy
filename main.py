@@ -66,7 +66,7 @@ def train():
     num_regions = 201 # int(input_size / bin_size)
     half_num_regions = 100
     mid_bin = math.floor(num_regions / 2)
-    BATCH_SIZE = 2
+    BATCH_SIZE = 4
     out_stack_num = 2500
     # our_model = mo.simple_model(input_size, num_regions, out_stack_num)
 
@@ -164,9 +164,9 @@ def train():
         #         if eval_tracks[i] in gas_keys[j]:
         #             chosen_tracks[i] = gas_keys[j]
         #             break
-        if k > 0:
-            our_model = tf.keras.models.load_model(model_folder + "/" + model_name,
-                                                   custom_objects={'PatchEncoder': mo.PatchEncoder})
+        # if k > 0:
+        #     our_model = tf.keras.models.load_model(model_folder + "/" + model_name,
+        #                                            custom_objects={'PatchEncoder': mo.PatchEncoder})
         if k > 0 or not model_was_created:
             our_model.get_layer("last_conv1d").set_weights(joblib.load(model_folder + "/head" + str(head_id)))
         gas = {}
@@ -557,10 +557,10 @@ def train():
         test_output = None
         gas = None
         gc.collect()
-        del our_model
-        K.clear_session()
-        tf.compat.v1.reset_default_graph()
-        gc.collect()
+        # del our_model
+        # K.clear_session()
+        # tf.compat.v1.reset_default_graph()
+        # gc.collect()
         print_memory()
         for name, size in sorted(((name, sys.getsizeof(value)) for name, value in locals().items()),
                                  key=lambda x: -x[1])[:10]:
