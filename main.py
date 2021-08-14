@@ -253,7 +253,7 @@ def train():
                     #     l.trainable = False
                     # else:
                     l.trainable = True
-                base_optimizer = tf.keras.optimizers.SGD()  # define an optimizer for the "sharpness-aware" update
+                base_optimizer = tf.keras.optimizers.SGD(learning_rate=lr, momentum=0.9)  # define an optimizer for the "sharpness-aware" update
                 base_optimizer = LossScaleOptimizer(optimizer, initial_scale=2 ** 2)
                 optimizer = SAM(base_optimizer)
                 # optimizer = tfa.optimizers.AdamW(learning_rate=lr, weight_decay=0.0001)
