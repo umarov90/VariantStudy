@@ -22,6 +22,7 @@ import pickle
 from scipy import stats
 import matplotlib
 from tensorflow.keras import backend as K
+from tensorflow.keras.mixed_precision import LossScaleOptimizer
 import tensorflow_addons as tfa
 import matplotlib.pyplot as plt
 from heapq import nsmallest
@@ -35,6 +36,8 @@ import parse_data as parser
 from datetime import datetime
 matplotlib.use("agg")
 from scipy.ndimage.filters import gaussian_filter
+from sam import SAM
+
 
 # tf.compat.v1.disable_eager_execution()
 # physical_devices = tf.config.experimental.list_physical_devices('GPU')
@@ -250,7 +253,10 @@ def train():
                     #     l.trainable = False
                     # else:
                     l.trainable = True
-                optimizer = tfa.optimizers.AdamW(learning_rate=lr, weight_decay=0.0001)
+                base_optimizer = tf.keras.optimizers.SGD()  # define an optimizer for the "sharpness-aware" update
+                base_optimizer = LossScaleOptimizer(optimizer, initial_scale=2 ** 2)
+                optimizer = SAM(base_optimizer)
+                # optimizer = tfa.optimizers.AdamW(learning_rate=lr, weight_decay=0.0001)
                 # optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
                 our_model.compile(loss="mse", optimizer=optimizer)
 

@@ -6,6 +6,7 @@ from tensorflow.keras.models import Model
 # from tensorflow.keras.regularizers import l2
 import tensorflow as tf
 import common as cm
+from sam import sam_train_step
 
 
 projection_dim = 96
@@ -27,27 +28,27 @@ def simple_model(input_size, num_regions, cell_num):
     # x = Dropout(0.5)(x)
 
     # Encode patches.
-    encoded_patches = PatchEncoder(num_patches, projection_dim)(x)
-
-    # Create multiple layers of the Transformer block.
-    for i in range(transformer_layers):
-        # Layer normalization 1.
-        x1 = LayerNormalization(epsilon=1e-6, name="ln_" + str(i) + "_1")(encoded_patches)
-        # Create a multi-head attention layer.
-        attention_output = MultiHeadAttention(
-            num_heads=num_heads, key_dim=projection_dim, dropout=0.1, name="mha_" + str(i)
-        )(x1, x1)
-        # Skip connection 1.
-        x2 = Add()([attention_output, encoded_patches])
-        # Layer normalization 2.
-        x3 = LayerNormalization(epsilon=1e-6, name="ln_" + str(i) + "_2")(x2)
-        # MLP.
-        x3 = mlp(x3, hidden_units=transformer_units, dropout_rate=0.1, name="mlp_" + str(i))
-        # Skip connection 2.
-        encoded_patches = Add()([x3, x2])
-
-    # Create a [batch_size, projection_dim] tensor.
-    x = LayerNormalization(epsilon=1e-6, name="ln_rep")(encoded_patches)
+    # encoded_patches = PatchEncoder(num_patches, projection_dim)(x)
+    #
+    # # Create multiple layers of the Transformer block.
+    # for i in range(transformer_layers):
+    #     # Layer normalization 1.
+    #     x1 = LayerNormalization(epsilon=1e-6, name="ln_" + str(i) + "_1")(encoded_patches)
+    #     # Create a multi-head attention layer.
+    #     attention_output = MultiHeadAttention(
+    #         num_heads=num_heads, key_dim=projection_dim, dropout=0.1, name="mha_" + str(i)
+    #     )(x1, x1)
+    #     # Skip connection 1.
+    #     x2 = Add()([attention_output, encoded_patches])
+    #     # Layer normalization 2.
+    #     x3 = LayerNormalization(epsilon=1e-6, name="ln_" + str(i) + "_2")(x2)
+    #     # MLP.
+    #     x3 = mlp(x3, hidden_units=transformer_units, dropout_rate=0.1, name="mlp_" + str(i))
+    #     # Skip connection 2.
+    #     encoded_patches = Add()([x3, x2])
+    #
+    # # Create a [batch_size, projection_dim] tensor.
+    # x = LayerNormalization(epsilon=1e-6, name="ln_rep")(encoded_patches)
 
     target_length = 200
     trim = (x.shape[-2] - target_length) // 2
@@ -61,9 +62,14 @@ def simple_model(input_size, num_regions, cell_num):
     outputs = tf.transpose(outputs, [0, 2, 1])
     outputs = LeakyReLU(alpha=0.1, name="model_final_output", dtype='float32')(outputs)
     print(outputs)
-    model = Model(inputs, outputs, name="model")
+    model = SAMModel(inputs, outputs, name="model")
     print("\nModel constructed")
     return model
+
+
+class SAMModel(tf.keras.Model):
+    def train_step(self, data):
+        return sam_train_step(self, data)
 
 
 def resnet_layer(inputs,
