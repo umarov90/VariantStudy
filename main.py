@@ -120,12 +120,25 @@ def train():
     model_was_created = True
     with strategy.scope():
         if Path(model_folder + "/" + model_name).is_file():
-            our_model = tf.keras.models.load_model(model_folder + "/" + model_name, custom_objects={'PatchEncoder': mo.PatchEncoder})
+            our_model = tf.keras.models.load_model(model_folder + "/" + model_name, custom_objects={'SAMModel': mo.SAMModel,
+                                                                                                    'PatchEncoder': mo.PatchEncoder})
             # ,custom_objects={'PatchEncoder': mo.PatchEncoder}
             print('Loaded existing model ' + model_folder + "/" + model_name)
             model_was_created = False
         else:
             our_model = mo.simple_model(input_size, num_regions, out_stack_num)
+
+            print(datetime.now().strftime('[%H:%M:%S] ') + "Compiling model")
+            lr = 0.0001
+            with strategy.scope():
+                # base_optimizer = tf.keras.optimizers.SGD(learning_rate=lr, momentum=0.9)
+                # base_optimizer = LossScaleOptimizer(base_optimizer, initial_scale=2 ** 2)
+                # optimizer = SAM(base_optimizer)
+                # optimizer = tfa.optimizers.AdamW(learning_rate=lr, weight_decay=0.0001)
+                optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
+                our_model.compile(loss="mse", optimizer=optimizer)
+                optimizer = None
+
             Path(model_folder).mkdir(parents=True, exist_ok=True)
             our_model.save(model_folder + "/" + model_name)
             print("Model saved " + model_folder + "/" + model_name)
@@ -168,8 +181,8 @@ def train():
         #             chosen_tracks[i] = gas_keys[j]
         #             break
         if k > 0:
-            our_model = tf.keras.models.load_model(model_folder + "/" + model_name, custom_objects={'SAMModel': mo.SAMModel})
-        #                                            custom_objects={'PatchEncoder': mo.PatchEncoder})
+            our_model = tf.keras.models.load_model(model_folder + "/" + model_name, custom_objects={'SAMModel': mo.SAMModel,
+                                                                                                    'PatchEncoder': mo.PatchEncoder})
         if k > 0 or not model_was_created:
             our_model.get_layer("last_conv1d").set_weights(joblib.load(model_folder + "/head" + str(head_id)))
         gas = {}
@@ -232,34 +245,6 @@ def train():
             fit_epochs = 4
         else:
             fit_epochs = 4
-        if k == 0 and model_was_created:
-            print(datetime.now().strftime('[%H:%M:%S] ') + "Compiling model")
-            # if k < 300:
-            #     lr = 0.0001
-            # elif k < 600:
-            #     lr = 0.00005
-            # else:
-            #     lr = 0.00002
-            lr = 0.0001
-            with strategy.scope():
-                # if k % 9 != 0:
-                #     freeze = True
-                #     fit_epochs = 4
-                # else:
-                #     freeze = False
-                #     fit_epochs = 2
-                for l in our_model.layers:
-                    # if "out_row" not in l.name and freeze:
-                    #     l.trainable = False
-                    # else:
-                    l.trainable = True
-                # base_optimizer = tf.keras.optimizers.SGD(learning_rate=lr, momentum=0.9)
-                # base_optimizer = LossScaleOptimizer(base_optimizer, initial_scale=2 ** 2)
-                # optimizer = SAM(base_optimizer)
-                # optimizer = tfa.optimizers.AdamW(learning_rate=lr, weight_decay=0.0001)
-                optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
-                our_model.compile(loss="mse", optimizer=optimizer)
-                optimizer = None
 
         print(datetime.now().strftime('[%H:%M:%S] ') + "Training")
         gc.collect()
@@ -553,6 +538,7 @@ def train():
                 #         plt.savefig(figures_folder + "/attribution/track_" + str(i + 1) + "_" + str(cell) + "_" + test_info[i] + ".jpg")
                 #         plt.close(fig)
                 predictions = None
+                final_test_pred = None
             except Exception as e:
                 print(e)
                 print(datetime.now().strftime('[%H:%M:%S] ') + "Problem during evaluation")

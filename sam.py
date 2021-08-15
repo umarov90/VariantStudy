@@ -2,7 +2,7 @@ import tensorflow as tf
 
 
 class SAM():
-    def __init__(self, base_optimizer, rho=0.05):
+    def __init__(self, base_optimizer, rho=0.02):
         assert rho >= 0.0, f"Invalid rho, should be non-negative: {rho}"
         
         self.rho = rho
@@ -26,7 +26,7 @@ class SAM():
 
 # if you want to use model.fit(), override the train_step method of a model with this function, example is mnist_example_keras_fit.
 # for customization see https://www.tensorflow.org/guide/keras/customizing_what_happens_in_fit/
-def sam_train_step(self, data, rho=0.05, eps=1e-7):
+def sam_train_step(self, data, rho=0.02, eps=1e-7):
     # Unpack the data. Its structure depends on your model and
     # on what you pass to `fit()`.
     if len(data) == 3:
