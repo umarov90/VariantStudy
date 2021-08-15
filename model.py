@@ -7,7 +7,7 @@ from tensorflow.keras.models import Model
 import tensorflow as tf
 import common as cm
 from sam import sam_train_step
-
+import numpy as np
 
 projection_dim = 64
 num_heads = 4
