@@ -259,6 +259,7 @@ def train():
                 # optimizer = tfa.optimizers.AdamW(learning_rate=lr, weight_decay=0.0001)
                 optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
                 our_model.compile(loss="mse", optimizer=optimizer)
+                optimizer = None
 
         print(datetime.now().strftime('[%H:%M:%S] ') + "Training")
         gc.collect()
