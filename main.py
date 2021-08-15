@@ -168,7 +168,7 @@ def train():
         #             chosen_tracks[i] = gas_keys[j]
         #             break
         if k > 0:
-            our_model = tf.keras.models.load_model(model_folder + "/" + model_name)
+            our_model = tf.keras.models.load_model(model_folder + "/" + model_name, custom_objects={'SAMModel': mo.SAMModel})
         #                                            custom_objects={'PatchEncoder': mo.PatchEncoder})
         if k > 0 or not model_was_created:
             our_model.get_layer("last_conv1d").set_weights(joblib.load(model_folder + "/head" + str(head_id)))
