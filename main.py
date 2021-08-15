@@ -167,8 +167,8 @@ def train():
         #         if eval_tracks[i] in gas_keys[j]:
         #             chosen_tracks[i] = gas_keys[j]
         #             break
-        # if k > 0:
-        #     our_model = tf.keras.models.load_model(model_folder + "/" + model_name,
+        if k > 0:
+            our_model = tf.keras.models.load_model(model_folder + "/" + model_name)
         #                                            custom_objects={'PatchEncoder': mo.PatchEncoder})
         if k > 0 or not model_was_created:
             our_model.get_layer("last_conv1d").set_weights(joblib.load(model_folder + "/head" + str(head_id)))
@@ -256,8 +256,8 @@ def train():
                 # base_optimizer = tf.keras.optimizers.SGD(learning_rate=lr, momentum=0.9)
                 # base_optimizer = LossScaleOptimizer(base_optimizer, initial_scale=2 ** 2)
                 # optimizer = SAM(base_optimizer)
-                optimizer = tfa.optimizers.AdamW(learning_rate=lr, weight_decay=0.0001)
-                # optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
+                # optimizer = tfa.optimizers.AdamW(learning_rate=lr, weight_decay=0.0001)
+                optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
                 our_model.compile(loss="mse", optimizer=optimizer)
 
         print(datetime.now().strftime('[%H:%M:%S] ') + "Training")
@@ -563,10 +563,10 @@ def train():
         test_output = None
         gas = None
         gc.collect()
-        # del our_model
-        # K.clear_session()
-        # tf.compat.v1.reset_default_graph()
-        # gc.collect()
+        del our_model
+        K.clear_session()
+        tf.compat.v1.reset_default_graph()
+        gc.collect()
         print_memory()
         for name, size in sorted(((name, sys.getsizeof(value)) for name, value in locals().items()),
                                  key=lambda x: -x[1])[:10]:
