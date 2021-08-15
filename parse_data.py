@@ -158,17 +158,15 @@ def get_sequences(bin_size, chromosomes):
     else:
         gene_tss = pd.read_csv("TSS_flank_0.bed",
                             sep="\t", index_col=False, names=["chrom", "start", "end", "geneID", "score", "strand"])
-        gene_info = pd.read_csv("gene.info.tsv",
-                               sep="\t", index_col=False)
+        gene_info = pd.read_csv("gene.info.tsv", sep="\t", index_col=False)
+        prom_info = pd.read_csv("hg38.gencode_v32.promoter.window.info.tsv", sep="\t", index_col=False)
         test_info = []
-        test_genes = gene_tss.loc[gene_tss['chrom'] == "chr1"]
+        test_genes = prom_info.loc[(prom_info['chrom'] == "chr1") & (prom_info['max_overall_rank'] == 1)]
         for index, row in test_genes.iterrows():
-            pos = int(row["start"])
-            gene_type = gene_info[gene_info['geneID'] == row["geneID"]]['geneType'].values[0]
-            gene_rank = gene_info[gene_info['geneID'] == row["geneID"]]['geneType'].values[0]
-            if gene_rank != 1:
-                continue
-            test_info.append([row["chrom"], pos, row["geneID"], gene_type, row["strand"]])
+            vals = row["TSS_str"].split(";")
+            pos = int(vals[int(len(vals) / 2)].split(",")[1])
+            strand = vals[int(len(vals) / 2)].split(",")[2]
+            test_info.append([row["chrom"], pos, row["geneID_str"], row["geneType_str"], strand])
         print(f"Test set complete {len(test_info)}")
         train_info = []
         train_genes = gene_tss.loc[gene_tss['chrom'] != "chr1"]

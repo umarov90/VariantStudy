@@ -9,8 +9,8 @@ import common as cm
 from sam import sam_train_step
 
 
-projection_dim = 96
-num_heads = 8
+projection_dim = 64
+num_heads = 4
 transformer_units = [
     projection_dim * 2,
     projection_dim,
@@ -27,7 +27,6 @@ def simple_model(input_size, num_regions, cell_num):
     num_patches = 313
     # x = Dropout(0.5)(x)
 
-    # Encode patches.
     # encoded_patches = PatchEncoder(num_patches, projection_dim)(x)
     #
     # # Create multiple layers of the Transformer block.
@@ -47,7 +46,6 @@ def simple_model(input_size, num_regions, cell_num):
     #     # Skip connection 2.
     #     encoded_patches = Add()([x3, x2])
     #
-    # # Create a [batch_size, projection_dim] tensor.
     # x = LayerNormalization(epsilon=1e-6, name="ln_rep")(encoded_patches)
 
     target_length = 200
@@ -109,7 +107,7 @@ def resnet_layer(inputs,
 
 def resnet_v2(input_x, num_stages, num_res_blocks):
     # Start model definition.
-    num_filters_in = 384
+    num_filters_in = 512
 
     # v2 performs Conv2D with BN-ReLU on input before splitting into 2 paths
     x = resnet_layer(inputs=input_x,

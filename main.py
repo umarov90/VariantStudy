@@ -77,7 +77,7 @@ def train():
     # strategy = tf.distribute.MirroredStrategy()
     print('Number of devices: {}'.format(strategy.num_replicas_in_sync))
     GLOBAL_BATCH_SIZE = BATCH_SIZE * strategy.num_replicas_in_sync
-    STEPS_PER_EPOCH = 200
+    STEPS_PER_EPOCH = 250
     num_epochs = 10000
     test_chr = "chr1"
     hic_track_size = 1
@@ -253,10 +253,10 @@ def train():
                     #     l.trainable = False
                     # else:
                     l.trainable = True
-                base_optimizer = tf.keras.optimizers.SGD(learning_rate=lr, momentum=0.9)  # define an optimizer for the "sharpness-aware" update
-                base_optimizer = LossScaleOptimizer(base_optimizer, initial_scale=2 ** 2)
-                optimizer = SAM(base_optimizer)
-                # optimizer = tfa.optimizers.AdamW(learning_rate=lr, weight_decay=0.0001)
+                # base_optimizer = tf.keras.optimizers.SGD(learning_rate=lr, momentum=0.9)
+                # base_optimizer = LossScaleOptimizer(base_optimizer, initial_scale=2 ** 2)
+                # optimizer = SAM(base_optimizer)
+                optimizer = tfa.optimizers.AdamW(learning_rate=lr, weight_decay=0.0001)
                 # optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
                 our_model.compile(loss="mse", optimizer=optimizer)
 
