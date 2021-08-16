@@ -61,7 +61,7 @@ half_num_regions = 100
 mid_bin = math.floor(num_regions / 2)
 BATCH_SIZE = 1
 out_stack_num = 2000
-STEPS_PER_EPOCH = 400
+STEPS_PER_EPOCH = 800
 chromosomes = ["chrX"]  # "chrY"
 for i in range(1, 23):
     chromosomes.append("chr" + str(i))
@@ -71,6 +71,7 @@ hic_track_size = 1
 
 def create_model(q, heads):
     import tensorflow as tf
+    import tensorflow_addons as tfa
     strategy = tf.distribute.experimental.MultiWorkerMirroredStrategy()
     with strategy.scope():
         our_model = mo.simple_model(input_size, num_regions, out_stack_num)
@@ -80,10 +81,9 @@ def create_model(q, heads):
             # base_optimizer = tf.keras.optimizers.SGD(learning_rate=lr, momentum=0.9)
             # base_optimizer = LossScaleOptimizer(base_optimizer, initial_scale=2 ** 2)
             # optimizer = SAM(base_optimizer)
-            # optimizer = tfa.optimizers.AdamW(learning_rate=lr, weight_decay=0.0001)
-            optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
+            optimizer = tfa.optimizers.AdamW(learning_rate=lr, weight_decay=0.0001)
+            # optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
             our_model.compile(loss="mse", optimizer=optimizer)
-            optimizer = None
 
         Path(model_folder).mkdir(parents=True, exist_ok=True)
         our_model.save(model_folder + "/" + model_name)
@@ -191,7 +191,7 @@ def run_epoch(q, k, train_info, test_info, heads, one_hot):
     for name, size in sorted(((name, sys.getsizeof(value)) for name, value in locals().items()),
                              key=lambda x: -x[1])[:10]:
         print("{:>30}: {:>8}".format(name, cm.get_human_readable(size)))
-    fit_epochs = 1
+    fit_epochs = 4
 
     print(datetime.now().strftime('[%H:%M:%S] ') + "Training")
     gc.collect()
