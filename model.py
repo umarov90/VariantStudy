@@ -16,6 +16,7 @@ transformer_units = [
     projection_dim,
 ]
 transformer_layers = 4
+CHANNELS_NUM = 512
 
 
 def simple_model(input_size, num_regions, cell_num):
@@ -26,6 +27,12 @@ def simple_model(input_size, num_regions, cell_num):
     x = resnet_v2(x, 9, 2)
     num_patches = 313
     # x = Dropout(0.5)(x)
+    # for i in range(10):
+    #     prev = x
+    #     x = Conv1D(512, kernel_size=3, dilation_rate=2 ** (i+1), name="dilatation_" + str(i+1))(x)
+    #     x = BatchNormalization(name="bn_dilation_" + str(i+1))(x)
+    #     x = Add()([x, prev])
+    #     x = LeakyReLU(alpha=0.1, name="act_dilation_" + str(i+1))(x)
 
     # encoded_patches = PatchEncoder(num_patches, projection_dim)(x)
     #
@@ -60,7 +67,7 @@ def simple_model(input_size, num_regions, cell_num):
     outputs = tf.transpose(outputs, [0, 2, 1])
     outputs = LeakyReLU(alpha=0.1, name="model_final_output", dtype='float32')(outputs)
     print(outputs)
-    model = SAMModel(inputs, outputs, name="model")
+    model = Model(inputs, outputs, name="model")
     print("\nModel constructed")
     return model
 
@@ -72,7 +79,7 @@ class SAMModel(tf.keras.Model):
 
 def resnet_layer(inputs,
                  num_filters=16,
-                 kernel_size=8,
+                 kernel_size=7,
                  strides=1,
                  activation='relu',
                  batch_normalization=True,
@@ -107,7 +114,7 @@ def resnet_layer(inputs,
 
 def resnet_v2(input_x, num_stages, num_res_blocks):
     # Start model definition.
-    num_filters_in = 512
+    num_filters_in = CHANNELS_NUM
 
     # v2 performs Conv2D with BN-ReLU on input before splitting into 2 paths
     x = resnet_layer(inputs=input_x,
