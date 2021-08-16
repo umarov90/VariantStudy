@@ -47,7 +47,7 @@ matplotlib.use("agg")
 # random.seed(seed)
 # np.random.seed(seed)
 # tf.random.set_seed(seed)
-model_folder = "model1"
+model_folder = "model2"
 model_name = "expression_model_1.h5"
 figures_folder = "figures_1"
 input_size = 80001
@@ -61,7 +61,7 @@ half_num_regions = 100
 mid_bin = math.floor(num_regions / 2)
 BATCH_SIZE = 1
 out_stack_num = 2000
-STEPS_PER_EPOCH = 800
+STEPS_PER_EPOCH = 1000
 chromosomes = ["chrX"]  # "chrY"
 for i in range(1, 23):
     chromosomes.append("chr" + str(i))
@@ -189,7 +189,7 @@ def run_epoch(q, k, train_info, test_info, heads, one_hot):
     for name, size in sorted(((name, sys.getsizeof(value)) for name, value in locals().items()),
                              key=lambda x: -x[1])[:10]:
         print("{:>30}: {:>8}".format(name, cm.get_human_readable(size)))
-    fit_epochs = 4
+    fit_epochs = 2
 
     print(datetime.now().strftime('[%H:%M:%S] ') + "Training")
     gc.collect()

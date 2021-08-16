@@ -27,12 +27,13 @@ def simple_model(input_size, num_regions, cell_num):
     x = resnet_v2(x, 9, 2)
     num_patches = 313
     # x = Dropout(0.5)(x)
-    # for i in range(10):
-    #     prev = x
-    #     x = Conv1D(512, kernel_size=3, dilation_rate=2 ** (i+1), name="dilatation_" + str(i+1))(x)
-    #     x = BatchNormalization(name="bn_dilation_" + str(i+1))(x)
-    #     x = Add()([x, prev])
-    #     x = LeakyReLU(alpha=0.1, name="act_dilation_" + str(i+1))(x)
+    for i in range(10):
+        prev = x
+        x = Conv1D(CHANNELS_NUM, kernel_size=3, dilation_rate=2 ** (i+1),
+                   name="dilatation_" + str(i+1), padding='same')(x)
+        x = BatchNormalization(name="bn_dilation_" + str(i+1))(x)
+        x = Add()([x, prev])
+        x = LeakyReLU(alpha=0.1, name="act_dilation_" + str(i+1))(x)
 
     # encoded_patches = PatchEncoder(num_patches, projection_dim)(x)
     #
