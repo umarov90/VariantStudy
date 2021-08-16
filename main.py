@@ -8,7 +8,6 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 import logging
 
 logging.getLogger("tensorflow").setLevel(logging.ERROR)
-import tensorflow as tf
 import gc
 import random
 import pandas as pd
@@ -19,12 +18,8 @@ import model as mo
 import numpy as np
 import common as cm
 from pathlib import Path
-import pickle
 from scipy import stats
 import matplotlib
-from tensorflow.keras import backend as K
-from tensorflow.keras.mixed_precision import LossScaleOptimizer
-import tensorflow_addons as tfa
 import matplotlib.pyplot as plt
 from heapq import nsmallest
 import copy
@@ -35,18 +30,18 @@ import psutil
 import sys
 import parse_data as parser
 from datetime import datetime
+# import signal
+# signal.signal(signal.SIGCHLD, signal.SIG_IGN)
 import multiprocessing as mp
 matplotlib.use("agg")
-from scipy.ndimage.filters import gaussian_filter
-from sam import SAM
+# from scipy.ndimage.filters import gaussian_filter
+# from sam import SAM
 
 # tf.compat.v1.disable_eager_execution()
-physical_devices = tf.config.experimental.list_physical_devices('GPU')
-assert len(physical_devices) > 0, "Not enough GPU hardware devices available"
-for device in physical_devices:
-    config1 = tf.config.experimental.set_memory_growth(device, True)
-from tensorflow.keras import mixed_precision
-mixed_precision.set_global_policy('mixed_float16')
+# physical_devices = tf.config.experimental.list_physical_devices('GPU')
+# assert len(physical_devices) > 0, "Not enough GPU hardware devices available"
+# for device in physical_devices:
+#     config1 = tf.config.experimental.set_memory_growth(device, True)
 
 # seed = 0
 # random.seed(seed)
@@ -64,9 +59,9 @@ num_hic_bins = int(input_size / hic_bin_size)
 num_regions = 201  # int(input_size / bin_size)
 half_num_regions = 100
 mid_bin = math.floor(num_regions / 2)
-BATCH_SIZE = 4
-out_stack_num = 2500
-STEPS_PER_EPOCH = 200
+BATCH_SIZE = 1
+out_stack_num = 2000
+STEPS_PER_EPOCH = 400
 chromosomes = ["chrX"]  # "chrY"
 for i in range(1, 23):
     chromosomes.append("chr" + str(i))
@@ -74,34 +69,47 @@ num_epochs = 10000
 hic_track_size = 1
 
 
-def run_epoch(k, train_info, test_info, heads, one_hot):
+def create_model(q, heads):
+    import tensorflow as tf
     strategy = tf.distribute.experimental.MultiWorkerMirroredStrategy()
-    # strategy = tf.distribute.MirroredStrategy()
-    print('Number of devices: {}'.format(strategy.num_replicas_in_sync))
-    GLOBAL_BATCH_SIZE = BATCH_SIZE * strategy.num_replicas_in_sync
-
-    if k == 0:
+    with strategy.scope():
+        our_model = mo.simple_model(input_size, num_regions, out_stack_num)
+        print(datetime.now().strftime('[%H:%M:%S] ') + "Compiling model")
+        lr = 0.0001
         with strategy.scope():
-            if not Path(model_folder + "/" + model_name).is_file():
-                our_model = mo.simple_model(input_size, num_regions, out_stack_num)
-                print(datetime.now().strftime('[%H:%M:%S] ') + "Compiling model")
-                lr = 0.0001
-                with strategy.scope():
-                    # base_optimizer = tf.keras.optimizers.SGD(learning_rate=lr, momentum=0.9)
-                    # base_optimizer = LossScaleOptimizer(base_optimizer, initial_scale=2 ** 2)
-                    # optimizer = SAM(base_optimizer)
-                    # optimizer = tfa.optimizers.AdamW(learning_rate=lr, weight_decay=0.0001)
-                    optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
-                    our_model.compile(loss="mse", optimizer=optimizer)
-                    optimizer = None
+            # base_optimizer = tf.keras.optimizers.SGD(learning_rate=lr, momentum=0.9)
+            # base_optimizer = LossScaleOptimizer(base_optimizer, initial_scale=2 ** 2)
+            # optimizer = SAM(base_optimizer)
+            # optimizer = tfa.optimizers.AdamW(learning_rate=lr, weight_decay=0.0001)
+            optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
+            our_model.compile(loss="mse", optimizer=optimizer)
+            optimizer = None
 
-                Path(model_folder).mkdir(parents=True, exist_ok=True)
-                our_model.save(model_folder + "/" + model_name)
-                print("Model saved " + model_folder + "/" + model_name)
-                for head_id in range(len(heads)):
-                    joblib.dump(our_model.get_layer("last_conv1d").get_weights(),
-                                model_folder + "/head" + str(head_id), compress=3)
-                print("Heads saved")
+        Path(model_folder).mkdir(parents=True, exist_ok=True)
+        our_model.save(model_folder + "/" + model_name)
+        print("Model saved " + model_folder + "/" + model_name)
+        for head_id in range(len(heads)):
+            joblib.dump(our_model.get_layer("last_conv1d").get_weights(),
+                        model_folder + "/head" + str(head_id), compress=3)
+        print("Heads saved")
+    q.put(None)
+
+
+def run_epoch(q, k, train_info, test_info, heads, one_hot):
+    import tensorflow as tf
+    from tensorflow.keras import mixed_precision
+    mixed_precision.set_global_policy('mixed_float16')
+    strategy = tf.distribute.experimental.MultiWorkerMirroredStrategy()
+
+    def wrap(input_sequences, output_scores, bs):
+        train_data = tf.data.Dataset.from_tensor_slices((input_sequences, output_scores))
+        train_data = train_data.batch(bs)
+        options = tf.data.Options()
+        options.experimental_distribute.auto_shard_policy = tf.data.experimental.AutoShardPolicy.DATA
+        train_data = train_data.with_options(options)
+        return train_data
+
+    GLOBAL_BATCH_SIZE = BATCH_SIZE * strategy.num_replicas_in_sync
 
     print(datetime.now().strftime('[%H:%M:%S] ') + "Epoch " + str(k))
     head_id = k % len(heads)
@@ -123,9 +131,10 @@ def run_epoch(k, train_info, test_info, heads, one_hot):
     #         if eval_tracks[i] in gas_keys[j]:
     #             chosen_tracks[i] = gas_keys[j]
     #             break
-    our_model = tf.keras.models.load_model(model_folder + "/" + model_name,
-                                           custom_objects={'SAMModel': mo.SAMModel,
-                                                           'PatchEncoder': mo.PatchEncoder})
+    with strategy.scope():
+        our_model = tf.keras.models.load_model(model_folder + "/" + model_name,
+                                               custom_objects={'SAMModel': mo.SAMModel,
+                                                               'PatchEncoder': mo.PatchEncoder})
     our_model.get_layer("last_conv1d").set_weights(joblib.load(model_folder + "/head" + str(head_id)))
     gas = {}
     for i, key in enumerate(chosen_tracks):
@@ -205,21 +214,8 @@ def run_epoch(k, train_info, test_info, heads, one_hot):
     except Exception as e:
         print(e)
         print(datetime.now().strftime('[%H:%M:%S] ') + "Error while training.")
-        exit()
-        # del our_model
-        # del strategy
-        # train_data = None
-        # gc.collect()
-        # K.clear_session()
-        # tf.compat.v1.reset_default_graph()
-        # gc.collect()
-        # time.sleep(2)
-        # input_sequences = None
-        # output_scores = None
-        # predictions = None
-        # gc.collect()
-        # time.sleep(2)
-        # continue
+        q.put(None)
+        return None
 
     if k % 5 == 0:  # and k != 0
         print(datetime.now().strftime('[%H:%M:%S] ') + "Evaluating")
@@ -394,35 +390,35 @@ def run_epoch(k, train_info, test_info, heads, one_hot):
                     myfile.write(str(np.mean([i[0] for i in corrs[track_type]])) + "\t")
                 myfile.write("\n")
 
-            print("Drawing tracks")
-            pic_count = 0
-            for it, ct in enumerate(chosen_tracks):
-                if "ctss" not in ct:
-                    continue
-                for i in range(len(predictions)):
-                    if np.sum(test_output[i][it]) == 0:
-                        continue
-                    fig, axs = plt.subplots(2, 1, figsize=(12, 8))
-                    vector1 = predictions[i][it]
-                    vector2 = test_output[i][it]
-                    x = range(num_regions)
-                    d1 = {'bin': x, 'expression': vector1}
-                    df1 = pd.DataFrame(d1)
-                    d2 = {'bin': x, 'expression': vector2}
-                    df2 = pd.DataFrame(d2)
-                    sns.lineplot(data=df1, x='bin', y='expression', ax=axs[0])
-                    axs[0].set_title("Prediction")
-                    sns.lineplot(data=df2, x='bin', y='expression', ax=axs[1])
-                    axs[1].set_title("Ground truth")
-                    fig.tight_layout()
-                    plt.savefig(
-                        figures_folder + "/tracks/test_track_" + str(testinfo_small[i][2]) + "_" + str(ct) + ".png")
-                    plt.close(fig)
-                    pic_count += 1
-                    if i > 20:
-                        break
-                if pic_count > 100:
-                    break
+            # print("Drawing tracks")
+            # pic_count = 0
+            # for it, ct in enumerate(chosen_tracks):
+            #     if "ctss" not in ct:
+            #         continue
+            #     for i in range(len(predictions)):
+            #         if np.sum(test_output[i][it]) == 0:
+            #             continue
+            #         fig, axs = plt.subplots(2, 1, figsize=(12, 8))
+            #         vector1 = predictions[i][it]
+            #         vector2 = test_output[i][it]
+            #         x = range(num_regions)
+            #         d1 = {'bin': x, 'expression': vector1}
+            #         df1 = pd.DataFrame(d1)
+            #         d2 = {'bin': x, 'expression': vector2}
+            #         df2 = pd.DataFrame(d2)
+            #         sns.lineplot(data=df1, x='bin', y='expression', ax=axs[0])
+            #         axs[0].set_title("Prediction")
+            #         sns.lineplot(data=df2, x='bin', y='expression', ax=axs[1])
+            #         axs[1].set_title("Ground truth")
+            #         fig.tight_layout()
+            #         plt.savefig(
+            #             figures_folder + "/tracks/test_track_" + str(testinfo_small[i][2]) + "_" + str(ct) + ".png")
+            #         plt.close(fig)
+            #         pic_count += 1
+            #         if i > 20:
+            #             break
+            #     if pic_count > 100:
+            #         break
 
             # Gene regplot
             # for c, cell in enumerate(cells):
@@ -497,8 +493,7 @@ def run_epoch(k, train_info, test_info, heads, one_hot):
     #                          key=lambda x: -x[1])[:10]:
     #     print("{:>30}: {:>8}".format(name, cm.get_human_readable(size)))
     print(datetime.now().strftime('[%H:%M:%S] ') + "Epoch " + str(k) + " finished. ")
-    return k
-
+    q.put(None)
 
 def print_memory():
     mem = psutil.virtual_memory()
@@ -515,13 +510,7 @@ def recover_shape(v, size_X):
     return X
 
 
-def wrap(input_sequences, output_scores, bs):
-    train_data = tf.data.Dataset.from_tensor_slices((input_sequences, output_scores))
-    train_data = train_data.batch(bs)
-    options = tf.data.Options()
-    options.experimental_distribute.auto_shard_policy = tf.data.experimental.AutoShardPolicy.DATA
-    train_data = train_data.with_options(options)
-    return train_data
+
 
 
 def change_seq(x):
@@ -554,16 +543,18 @@ if __name__ == '__main__':
         random.shuffle(gas_keys)
         chosen_tracks = gas_keys
         heads = []
-        head1 = gas_keys[:500]
-        head2 = gas_keys[500:1000]
-        # head3 = gas_keys[5000:7500]
-        # head4 = gas_keys[7500:]
+        head1 = gas_keys[:2000]
+        head2 = gas_keys[2000:4000]
+        head3 = gas_keys[4000:6000]
+        head4 = gas_keys[6000:8000]
+        head5 = gas_keys[8000:]
         random.shuffle(head1)
-        # head4.extend(head1[:(2500 - len(head4))])
+        head5.extend(head1[:(out_stack_num - len(head5))])
         heads.append(head1)
         heads.append(head2)
-        # heads.append(head3)
-        # heads.append(head4)
+        heads.append(head3)
+        heads.append(head4)
+        heads.append(head5)
         joblib.dump(heads, "pickle/heads.gz", compress=3)
 
     print_memory()
@@ -582,8 +573,17 @@ if __name__ == '__main__':
         mp.set_start_method('spawn')
     except RuntimeError:
         pass
-    for k in range(num_epochs):
-        # q = mp.Queue()
-        p = mp.Process(target=run_epoch, args=(k, train_info, test_info, heads, one_hot,))
+    q = mp.Queue()
+    if not Path(model_folder + "/" + model_name).is_file():
+        p = mp.Process(target=create_model, args=(q,heads,))
         p.start()
+        print(q.get())
         p.join()
+        time.sleep(2)
+
+    for k in range(num_epochs):
+        p = mp.Process(target=run_epoch, args=(q, k, train_info, test_info, heads, one_hot,))
+        p.start()
+        print(q.get())
+        p.join()
+        time.sleep(2)
