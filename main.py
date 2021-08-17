@@ -359,39 +359,28 @@ def run_epoch(q, k, train_info, test_info, heads, one_hot):
             for track_type in corrs.keys():
                 print(f"{track_type} correlation : {np.mean([i[0] for i in corrs[track_type]])}")
 
-            print("All expressed genes corrs")
+            print("Across all genes corrs")
             corrs = {}
-            for it, ct in enumerate(chosen_tracks):
-                type = ct[ct.find("tracks_") + len("tracks_"):ct.find(".")]
-                a = []
-                b = []
-                for i in range(len(final_test_pred)):
-                    if test_output[i][it][mid_bin] < 0.01:
+            a = {}
+            b = {}
+            for i in range(len(final_test_pred)):
+                for it, ct in enumerate(chosen_tracks):
+                    type = ct[ct.find("tracks_") + len("tracks_"):ct.find(".")]
+                    if type != "CAGE":
                         continue
-                    a.append(final_test_pred[i][it])
-                    b.append(test_output[i][it][mid_bin])
-                corrs.setdefault(type, []).append((stats.spearmanr(a, b)[0], ct))
+                    a.setdefault(i, []).append(final_test_pred[i][it])
+                    b.setdefault(i, []).append(test_output[i][it][mid_bin])
+            a1 = []
+            b1 = []
+            for key in a.keys():
+                pred_mean = np.mean(a[key])
+                gt_mean = np.mean(b[key])
+                a1.append(pred_mean)
+                b1.append(gt_mean)
 
-            for track_type in corrs.keys():
-                print(f"{track_type} correlation : {np.mean([i[0] for i in corrs[track_type]])}")
+            acorr = stats.pearsonr(a1, b1)[0]
+            print(f"SSSSSSSSSSSSSSSSSSSSSspecial corr {acorr}")
 
-            print("Protein coding expressed corrs")
-            corrs = {}
-            for it, ct in enumerate(chosen_tracks):
-                type = ct[ct.find("tracks_") + len("tracks_"):ct.find(".")]
-                a = []
-                b = []
-                for i in range(len(final_test_pred)):
-                    if test_output[i][it][mid_bin] < 0.01:
-                        continue
-                    if testinfo_small[i][3] != "protein_coding":
-                        continue
-                    a.append(final_test_pred[i][it])
-                    b.append(test_output[i][it][mid_bin])
-                corrs.setdefault(type, []).append((stats.spearmanr(a, b)[0], ct))
-
-            for track_type in corrs.keys():
-                print(f"{track_type} correlation : {np.mean([i[0] for i in corrs[track_type]])}")
 
             print("Protein coding corrs")
             corrs = {}
