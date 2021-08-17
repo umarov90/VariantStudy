@@ -189,7 +189,7 @@ def run_epoch(q, k, train_info, test_info, heads, one_hot):
     for name, size in sorted(((name, sys.getsizeof(value)) for name, value in locals().items()),
                              key=lambda x: -x[1])[:10]:
         print("{:>30}: {:>8}".format(name, cm.get_human_readable(size)))
-    fit_epochs = 2
+    fit_epochs = 1
 
     print(datetime.now().strftime('[%H:%M:%S] ') + "Training")
     gc.collect()
