@@ -59,7 +59,7 @@ num_hic_bins = int(input_size / hic_bin_size)
 num_regions = 201  # int(input_size / bin_size)
 half_num_regions = 100
 mid_bin = math.floor(num_regions / 2)
-BATCH_SIZE = 1
+BATCH_SIZE = 2
 out_stack_num = 2000
 STEPS_PER_EPOCH = 1000
 chromosomes = ["chrX"]  # "chrY"
@@ -111,7 +111,7 @@ def create_model(q, heads):
     q.put(None)
 
 
-def run_epoch(q, k, train_info, test_info, heads, one_hot):
+def run_epoch(q, k, train_info, test_info, heads, one_hot, gas_keys):
     import tensorflow as tf
     from tensorflow.keras import mixed_precision
     mixed_precision.set_global_policy('mixed_float16')
@@ -313,81 +313,67 @@ def run_epoch(q, k, train_info, test_info, heads, one_hot):
             print("Test set")
 
             random.shuffle(test_info)
-            testinfo_small = test_info[:1000]
+            # testinfo_small = test_info[:1000]
+            testinfo_small = test_info
             # preparing test output tracks
-            final_test_pred = []
+            final_test_pred = {}
+            test_output = {}
             for i in range(len(testinfo_small)):
-                final_test_pred.append(np.zeros(out_stack_num))
-            test_output = []
-            for shift_val in [0]:  # -2 * bin_size, -1 * bin_size, 0, bin_size, 2 * bin_size
-                test_seq = []
-                for info in testinfo_small:
-                    start = int(info[1] + shift_val - half_size)
-                    ns = one_hot[info[0]][start:start + input_size]
-                    if len(ns) != input_size:
-                        continue
-                    start_bin = int(info[1] / bin_size) - half_num_regions
-                    scores = []
-                    for key in chosen_tracks:
-                        scores.append(gas[key][info[0]][start_bin: start_bin + num_regions])
-                    test_seq.append(ns)
-                    if shift_val == 0:
-                        test_output.append(scores)
+                final_test_pred[testinfo_small[i][2]] = {}
+                test_output[testinfo_small[i][2]] = {}
+            for head in heads:
+                chosen_tracks = head
+                for shift_val in [-1 * bin_size, 0, bin_size]:  # -2 * bin_size, -1 * bin_size, 0, bin_size, 2 * bin_size
+                    test_seq = []
+                    for info in testinfo_small:
+                        start = int(info[1] + shift_val - half_size)
+                        ns = one_hot[info[0]][start:start + input_size]
+                        if len(ns) != input_size:
+                            continue
+                        start_bin = int(info[1] / bin_size) - half_num_regions
+                        scores = []
+                        for key in chosen_tracks:
+                            scores.append(gas[key][info[0]][start_bin: start_bin + num_regions])
+                            if shift_val == 0:
+                                test_output[info[2]][key] = gas[key][info[0]][mid_bin]
+                        test_seq.append(ns)
+                    for comp in [True, False]:
+                        if comp:
+                            with Pool(4) as p:
+                                rc_arr = p.map(change_seq, test_seq)
+                            test_seq = rc_arr
+                        test_seq = np.asarray(test_seq)
+                        if comp:
+                            correction = 1 * int(shift_val / bin_size)
+                        else:
+                            correction = -1 * int(shift_val / bin_size)
+                        print(f"{shift_val} {comp} predicting")
+                        predictions = our_model.predict(test_seq, batch_size=GLOBAL_BATCH_SIZE)
+                        for i in range(len(testinfo_small)):
+                            for it, ct in enumerate(chosen_tracks):
+                                final_test_pred[testinfo_small[i][2]].setdefault(ct, []).\
+                                    append(predictions[i][it][mid_bin + correction])
+                                # + \
+                                # predictions[i][it][mid_bin + correction] + \
+                                # predictions[i][it][mid_bin + correction + 1]
+                        print(f"{shift_val} {comp} finished")
 
-                # print("loading in the values")
-                # for i, key in enumerate(chosen_tracks):
-                #     if i % 10 == 0:
-                #         print(i, end=" ")
-                #     parsed_track = joblib.load("parsed_tracks/" + key)
-                #     for s in test_output:
-                #         s[i] = parsed_track[s[i][0]][s[i][1]:s[i][2]].copy()
-
-                for comp in [False]:
-                    if comp:
-                        with Pool(4) as p:
-                            rc_arr = p.map(change_seq, test_seq)
-                        test_seq = rc_arr
-                    test_seq = np.asarray(test_seq)
-                    if comp:
-                        correction = 1 * int(shift_val / bin_size)
-                    else:
-                        correction = -1 * int(shift_val / bin_size)
-                    print(f"{shift_val} {comp} predicting")
-                    predictions = our_model.predict(test_seq, batch_size=2)
-                    for i in range(len(testinfo_small)):
-                        for it, ct in enumerate(chosen_tracks):
-                            final_test_pred[i][it] += predictions[i][it][mid_bin + correction]  # + \
-                            # predictions[i][it][mid_bin + correction] + \
-                            # predictions[i][it][mid_bin + correction + 1]
-                    print(f"{shift_val} {comp} finished")
-
-            # final_test_pred = np.divide(final_test_pred, 6)
-            test_output = np.asarray(test_output).astype(np.float16)
-            print("All genes corrs")
-            corrs = {}
-            for it, ct in enumerate(chosen_tracks):
-                type = ct[ct.find("tracks_") + len("tracks_"):ct.find(".")]
-                a = []
-                b = []
-                for i in range(len(final_test_pred)):
-                    a.append(final_test_pred[i][it])
-                    b.append(test_output[i][it][mid_bin])
-                corrs.setdefault(type, []).append((stats.spearmanr(a, b)[0], ct))
-
-            for track_type in corrs.keys():
-                print(f"{track_type} correlation : {np.mean([i[0] for i in corrs[track_type]])}")
+            for gene in final_test_pred.keys():
+                for track in gas_keys:
+                    final_test_pred[gene][track] = np.mean(final_test_pred[gene][track])
+            # test_output = np.asarray(test_output).astype(np.float16)
 
             print("Across all genes corrs")
             corrs = {}
             a = {}
             b = {}
-            for i in range(len(final_test_pred)):
-                for it, ct in enumerate(chosen_tracks):
-                    type = ct[ct.find("tracks_") + len("tracks_"):ct.find(".")]
+            for gene in final_test_pred.keys():
+                for track in gas_keys:
+                    type = track[track.find("tracks_") + len("tracks_"):track.find(".")]
                     if type != "CAGE":
                         continue
-                    a.setdefault(i, []).append(final_test_pred[i][it])
-                    b.setdefault(i, []).append(test_output[i][it][mid_bin])
+                    a.setdefault(gene, []).append(final_test_pred[gene][track])
+                    b.setdefault(gene, []).append(test_output[gene][track])
             a1 = []
             b1 = []
             for key in a.keys():
@@ -397,21 +383,35 @@ def run_epoch(q, k, train_info, test_info, heads, one_hot):
                 b1.append(gt_mean)
 
             acorr = stats.pearsonr(a1, b1)[0]
-            print(f"SSSSSSSSSSSSSSSSSSSSSspecial corr {acorr}")
+            print(f"Across all genes pearsonr {acorr}")
 
 
-            print("Protein coding corrs")
+            # print("Protein coding corrs")
+            # corrs = {}
+            # for it, ct in enumerate(chosen_tracks):
+            #     type = ct[ct.find("tracks_") + len("tracks_"):ct.find(".")]
+            #     a = []
+            #     b = []
+            #     for i in range(len(final_test_pred)):
+            #         if testinfo_small[i][3] != "protein_coding":
+            #             continue
+            #         a.append(final_test_pred[i][it])
+            #         b.append(test_output[i][it][mid_bin])
+            #     corrs.setdefault(type, []).append((stats.spearmanr(a, b)[0], ct))
+            #
+            # for track_type in corrs.keys():
+            #     print(f"{track_type} correlation : {np.mean([i[0] for i in corrs[track_type]])}")
+
+            print("Accross tracks pearsonr")
             corrs = {}
-            for it, ct in enumerate(chosen_tracks):
-                type = ct[ct.find("tracks_") + len("tracks_"):ct.find(".")]
+            for track in gas_keys:
+                type = track[track.find("tracks_") + len("tracks_"):track.find(".")]
                 a = []
                 b = []
-                for i in range(len(final_test_pred)):
-                    if testinfo_small[i][3] != "protein_coding":
-                        continue
-                    a.append(final_test_pred[i][it])
-                    b.append(test_output[i][it][mid_bin])
-                corrs.setdefault(type, []).append((stats.spearmanr(a, b)[0], ct))
+                for gene in final_test_pred.keys():
+                    a.append(final_test_pred[gene][track])
+                    b.append(test_output[gene][track])
+                corrs.setdefault(type, []).append((stats.pearsonr(a, b)[0], track))
 
             for track_type in corrs.keys():
                 print(f"{track_type} correlation : {np.mean([i[0] for i in corrs[track_type]])}")
@@ -510,27 +510,9 @@ def run_epoch(q, k, train_info, test_info, heads, one_hot):
             #         plt.tight_layout()
             #         plt.savefig(figures_folder + "/attribution/track_" + str(i + 1) + "_" + str(cell) + "_" + test_info[i] + ".jpg")
             #         plt.close(fig)
-            predictions = None
-            final_test_pred = None
         except Exception as e:
             print(e)
             print(datetime.now().strftime('[%H:%M:%S] ') + "Problem during evaluation")
-    # print_memory()
-    # print(datetime.now().strftime('[%H:%M:%S] ') + "Cleaning")
-    # # Needed to prevent Keras memory leak
-    # input_sequences = None
-    # output_scores = None
-    # test_output = None
-    # gas = None
-    # gc.collect()
-    # del our_model
-    # K.clear_session()
-    # tf.compat.v1.reset_default_graph()
-    # gc.collect()
-    # print_memory()
-    # for name, size in sorted(((name, sys.getsizeof(value)) for name, value in locals().items()),
-    #                          key=lambda x: -x[1])[:10]:
-    #     print("{:>30}: {:>8}".format(name, cm.get_human_readable(size)))
     print(datetime.now().strftime('[%H:%M:%S] ') + "Epoch " + str(k) + " finished. ")
     q.put(None)
 
@@ -620,14 +602,14 @@ if __name__ == '__main__':
         p.join()
         time.sleep(2)
 
-    p = mp.Process(target=recompile, args=(q,))
-    p.start()
-    print(q.get())
-    p.join()
-    time.sleep(2)
+    # p = mp.Process(target=recompile, args=(q,))
+    # p.start()
+    # print(q.get())
+    # p.join()
+    # time.sleep(2)
 
     for k in range(num_epochs):
-        p = mp.Process(target=run_epoch, args=(q, k, train_info, test_info, heads, one_hot,))
+        p = mp.Process(target=run_epoch, args=(q, k, train_info, test_info, heads, one_hot,gas_keys,))
         p.start()
         print(q.get())
         p.join()
