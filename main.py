@@ -69,6 +69,24 @@ num_epochs = 10000
 hic_track_size = 1
 
 
+def recompile(q):
+    import tensorflow as tf
+    strategy = tf.distribute.experimental.MultiWorkerMirroredStrategy()
+    with strategy.scope():
+        our_model = tf.keras.models.load_model(model_folder + "/" + model_name,
+                                               custom_objects={'SAMModel': mo.SAMModel,
+                                                               'PatchEncoder': mo.PatchEncoder})
+        print(datetime.now().strftime('[%H:%M:%S] ') + "Compiling model")
+        lr = 0.0005
+        with strategy.scope():
+            optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
+            our_model.compile(loss="mse", optimizer=optimizer)
+
+        our_model.save(model_folder + "/" + model_name)
+        print("Model saved " + model_folder + "/" + model_name)
+    q.put(None)
+
+
 def create_model(q, heads):
     import tensorflow as tf
     strategy = tf.distribute.experimental.MultiWorkerMirroredStrategy()
@@ -601,6 +619,12 @@ if __name__ == '__main__':
         print(q.get())
         p.join()
         time.sleep(2)
+
+    p = mp.Process(target=recompile, args=(q,))
+    p.start()
+    print(q.get())
+    p.join()
+    time.sleep(2)
 
     for k in range(num_epochs):
         p = mp.Process(target=run_epoch, args=(q, k, train_info, test_info, heads, one_hot,))
