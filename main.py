@@ -578,6 +578,7 @@ if __name__ == '__main__':
         heads.append(head5)
         joblib.dump(heads, "pickle/heads.gz", compress=3)
 
+    random.shuffle(heads)
     print_memory()
     for name, size in sorted(((name, sys.getsizeof(value)) for name, value in locals().items()),
                              key=lambda x: -x[1])[:10]:
