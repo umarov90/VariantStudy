@@ -375,22 +375,6 @@ def run_epoch(q, k, train_info, test_info, heads, one_hot):
             for track_type in corrs.keys():
                 print(f"{track_type} correlation : {np.mean([i[0] for i in corrs[track_type]])}")
 
-            print("Protein coding corrs")
-            corrs = {}
-            for it, ct in enumerate(chosen_tracks):
-                type = ct[ct.find("tracks_") + len("tracks_"):ct.find(".")]
-                a = []
-                b = []
-                for i in range(len(final_test_pred)):
-                    if testinfo_small[i][3] != "protein_coding":
-                        continue
-                    a.append(final_test_pred[i][it])
-                    b.append(test_output[i][it][mid_bin])
-                corrs.setdefault(type, []).append((stats.spearmanr(a, b)[0], ct))
-
-            for track_type in corrs.keys():
-                print(f"{track_type} correlation : {np.mean([i[0] for i in corrs[track_type]])}")
-
             print("Protein coding expressed corrs")
             corrs = {}
             for it, ct in enumerate(chosen_tracks):
@@ -400,6 +384,22 @@ def run_epoch(q, k, train_info, test_info, heads, one_hot):
                 for i in range(len(final_test_pred)):
                     if test_output[i][it][mid_bin] < 0.01:
                         continue
+                    if testinfo_small[i][3] != "protein_coding":
+                        continue
+                    a.append(final_test_pred[i][it])
+                    b.append(test_output[i][it][mid_bin])
+                corrs.setdefault(type, []).append((stats.spearmanr(a, b)[0], ct))
+
+            for track_type in corrs.keys():
+                print(f"{track_type} correlation : {np.mean([i[0] for i in corrs[track_type]])}")
+
+            print("Protein coding corrs")
+            corrs = {}
+            for it, ct in enumerate(chosen_tracks):
+                type = ct[ct.find("tracks_") + len("tracks_"):ct.find(".")]
+                a = []
+                b = []
+                for i in range(len(final_test_pred)):
                     if testinfo_small[i][3] != "protein_coding":
                         continue
                     a.append(final_test_pred[i][it])
