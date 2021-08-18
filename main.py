@@ -341,7 +341,7 @@ def run_epoch(q, k, train_info, test_info, heads, one_hot, gas_keys):
                         start_bin = int(info[1] / bin_size) - half_num_regions
                         if shift_val == 0:
                             for key in chosen_tracks:
-                                test_output[info[2]][key] = gas[key][info[0]][mid_bin]
+                                test_output[info[2]][key] = gas[key][info[0]][start_bin: start_bin + num_regions][mid_bin]
                         test_seq.append(ns)
                     for comp in [False]:
                         if comp:
@@ -582,6 +582,7 @@ if __name__ == '__main__':
         joblib.dump(heads, "pickle/heads.gz", compress=3)
 
     # random.shuffle(heads) need to add ids
+    print("Heads loaded")
     print_memory()
     for name, size in sorted(((name, sys.getsizeof(value)) for name, value in locals().items()),
                              key=lambda x: -x[1])[:10]:
@@ -594,10 +595,10 @@ if __name__ == '__main__':
     #     print(aaa)
     # eval_tracks = pd.read_csv('eval_tracks.tsv', delimiter='\t').values.flatten()
     # mp.set_start_method('spawn', force=True)
-    try:
-        mp.set_start_method('spawn')
-    except RuntimeError:
-        pass
+    # try:
+    #     mp.set_start_method('spawn')
+    # except RuntimeError:
+    #     pass
     q = mp.Queue()
     if not Path(model_folder + "/" + model_name).is_file():
         p = mp.Process(target=create_model, args=(q,heads,))
@@ -605,13 +606,14 @@ if __name__ == '__main__':
         print(q.get())
         p.join()
         time.sleep(1)
-
+    else:
+        print("Model exists")
     # p = mp.Process(target=recompile, args=(q,))
     # p.start()
     # print(q.get())
     # p.join()
     # time.sleep(1)
-
+    print("Training starting")
     for k in range(num_epochs):
         p = mp.Process(target=run_epoch, args=(q, k, train_info, test_info, heads, one_hot,gas_keys,))
         p.start()
