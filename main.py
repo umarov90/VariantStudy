@@ -58,9 +58,9 @@ num_hic_bins = int(input_size / hic_bin_size)
 num_regions = 201  # int(input_size / bin_size)
 half_num_regions = 100
 mid_bin = math.floor(num_regions / 2)
-BATCH_SIZE = 2
+BATCH_SIZE = 4
 out_stack_num = 2000
-STEPS_PER_EPOCH = 1000
+STEPS_PER_EPOCH = 200
 chromosomes = ["chrX"]  # "chrY"
 for i in range(1, 23):
     chromosomes.append("chr" + str(i))
@@ -211,28 +211,28 @@ def run_epoch(q, k, train_info, test_info, heads, one_hot, gas_keys):
     print(datetime.now().strftime('[%H:%M:%S] ') + "Training")
     gc.collect()
     print_memory()
-    if k != 0:
-        try:
-            train_data = wrap(input_sequences, output_scores, GLOBAL_BATCH_SIZE)
-            gc.collect()
-            our_model.fit(train_data, epochs=fit_epochs)
-            our_model.save(model_folder + "/" + model_name + "_temp.h5")
-            os.remove(model_folder + "/" + model_name)
-            os.rename(model_folder + "/" + model_name + "_temp.h5", model_folder + "/" + model_name)
-            joblib.dump(our_model.get_layer("last_conv1d").get_weights(),
-                        model_folder + "/head" + str(head_id) + "_temp", compress=3)
-            if os.path.exists(model_folder + "/head" + str(head_id)):
-                os.remove(model_folder + "/head" + str(head_id))
-            os.rename(model_folder + "/head" + str(head_id) + "_temp", model_folder + "/head" + str(head_id))
-            del train_data
-            gc.collect()
-        except Exception as e:
-            print(e)
-            print(datetime.now().strftime('[%H:%M:%S] ') + "Error while training.")
-            q.put(None)
-            return None
+    # if k != 0:
+    try:
+        train_data = wrap(input_sequences, output_scores, GLOBAL_BATCH_SIZE)
+        gc.collect()
+        our_model.fit(train_data, epochs=fit_epochs)
+        our_model.save(model_folder + "/" + model_name + "_temp.h5")
+        os.remove(model_folder + "/" + model_name)
+        os.rename(model_folder + "/" + model_name + "_temp.h5", model_folder + "/" + model_name)
+        joblib.dump(our_model.get_layer("last_conv1d").get_weights(),
+                    model_folder + "/head" + str(head_id) + "_temp", compress=3)
+        if os.path.exists(model_folder + "/head" + str(head_id)):
+            os.remove(model_folder + "/head" + str(head_id))
+        os.rename(model_folder + "/head" + str(head_id) + "_temp", model_folder + "/head" + str(head_id))
+        del train_data
+        gc.collect()
+    except Exception as e:
+        print(e)
+        print(datetime.now().strftime('[%H:%M:%S] ') + "Error while training.")
+        q.put(None)
+        return None
 
-    if k % 5 == 0:  # and k != 0
+    if k % 10 == 0:  # and k != 0
         print(datetime.now().strftime('[%H:%M:%S] ') + "Evaluating")
         try:
             print("Training set")
@@ -331,7 +331,7 @@ def run_epoch(q, k, train_info, test_info, heads, one_hot, gas_keys):
                     if i % 500 == 0:
                         print(i, end=" ")
                     gas[key] = joblib.load("parsed_tracks/" + key)
-                for shift_val in [0]:  # -2 * bin_size, -1 * bin_size, 0, bin_size, 2 * bin_size
+                for shift_val in [-1 * bin_size, 0, bin_size]:  # -2 * bin_size, -1 * bin_size, 0, bin_size, 2 * bin_size
                     test_seq = []
                     for info in testinfo_small:
                         start = int(info[1] + shift_val - half_size)
@@ -343,7 +343,7 @@ def run_epoch(q, k, train_info, test_info, heads, one_hot, gas_keys):
                             for key in chosen_tracks:
                                 test_output[info[2]][key] = gas[key][info[0]][start_bin: start_bin + num_regions][mid_bin]
                         test_seq.append(ns)
-                    for comp in [False]:
+                    for comp in [True, False]:
                         if comp:
                             with Pool(4) as p:
                                 rc_arr = p.map(change_seq, test_seq)
@@ -364,9 +364,6 @@ def run_epoch(q, k, train_info, test_info, heads, one_hot, gas_keys):
                                 # predictions[i][it][mid_bin + correction + 1]
                         print(f"{shift_val} {comp} finished")
 
-            for gene in final_test_pred.keys():
-                for track in gas_keys:
-                    final_test_pred[gene][track] = np.mean(final_test_pred[gene][track])
             # test_output = np.asarray(test_output).astype(np.float16)
 
             print("Across all genes corrs")
@@ -378,7 +375,7 @@ def run_epoch(q, k, train_info, test_info, heads, one_hot, gas_keys):
                     type = track[track.find("tracks_") + len("tracks_"):track.find(".")]
                     if type != "CAGE":
                         continue
-                    a.setdefault(gene, []).append(final_test_pred[gene][track])
+                    a.setdefault(gene, []).append(np.mean(final_test_pred[gene][track]))
                     b.setdefault(gene, []).append(test_output[gene][track])
             a1 = []
             b1 = []
@@ -415,7 +412,7 @@ def run_epoch(q, k, train_info, test_info, heads, one_hot, gas_keys):
                 a = []
                 b = []
                 for gene in final_test_pred.keys():
-                    a.append(final_test_pred[gene][track])
+                    a.append(np.mean(final_test_pred[gene][track]))
                     b.append(test_output[gene][track])
                 corrs.setdefault(type, []).append((stats.pearsonr(a, b)[0], track))
 
