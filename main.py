@@ -58,9 +58,9 @@ num_hic_bins = int(input_size / hic_bin_size)
 num_regions = 201  # int(input_size / bin_size)
 half_num_regions = 100
 mid_bin = math.floor(num_regions / 2)
-BATCH_SIZE = 4
-out_stack_num = 2000
-STEPS_PER_EPOCH = 200
+BATCH_SIZE = 3
+out_stack_num = 5000
+STEPS_PER_EPOCH = 2000
 chromosomes = ["chrX"]  # "chrY"
 for i in range(1, 23):
     chromosomes.append("chr" + str(i))
@@ -206,7 +206,7 @@ def run_epoch(q, k, train_info, test_info, heads, one_hot, gas_keys):
     for name, size in sorted(((name, sys.getsizeof(value)) for name, value in locals().items()),
                              key=lambda x: -x[1])[:10]:
         print("{:>30}: {:>8}".format(name, cm.get_human_readable(size)))
-    fit_epochs = 1
+    fit_epochs = 2
 
     print(datetime.now().strftime('[%H:%M:%S] ') + "Training")
     gc.collect()
@@ -564,18 +564,12 @@ if __name__ == '__main__':
     else:
         random.shuffle(gas_keys)
         heads = []
-        head1 = gas_keys[:2000]
-        head2 = gas_keys[2000:4000]
-        head3 = gas_keys[4000:6000]
-        head4 = gas_keys[6000:8000]
-        head5 = gas_keys[8000:]
+        head1 = gas_keys[:5000]
+        head2 = gas_keys[5000:]
         random.shuffle(head1)
-        head5.extend(head1[:(out_stack_num - len(head5))])
+        head2.extend(head1[:(out_stack_num - len(head1))])
         heads.append(head1)
         heads.append(head2)
-        heads.append(head3)
-        heads.append(head4)
-        heads.append(head5)
         joblib.dump(heads, "pickle/heads.gz", compress=3)
 
     # random.shuffle(heads) need to add ids

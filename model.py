@@ -16,7 +16,7 @@ transformer_units = [
     projection_dim,
 ]
 transformer_layers = 4
-CHANNELS_NUM = 1024
+CHANNELS_NUM = 512
 
 
 def simple_model(input_size, num_regions, cell_num):
@@ -59,7 +59,7 @@ def simple_model(input_size, num_regions, cell_num):
     target_length = 200
     trim = (x.shape[-2] - target_length) // 2
     x = x[..., trim:-trim, :]
-    x = Conv1D(4096, kernel_size=1, strides=1, name="pointwise", activation=tf.nn.gelu)(x)
+    x = Conv1D(2048, kernel_size=1, strides=1, name="pointwise", activation=tf.nn.gelu)(x)
     outputs = Conv1D(cell_num, kernel_size=1, strides=1, name="last_conv1d")(x)
     # trailing_axes = [-1, -2]
     # leading = tf.range(tf.rank(x) - len(trailing_axes))
