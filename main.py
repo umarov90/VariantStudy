@@ -232,7 +232,7 @@ def run_epoch(q, k, train_info, test_info, heads, one_hot, gas_keys):
         q.put(None)
         return None
 
-    if k % 10 == 0:  # and k != 0
+    if k % 5 == 0:  # and k != 0
         print(datetime.now().strftime('[%H:%M:%S] ') + "Evaluating")
         try:
             print("Training set")
@@ -308,12 +308,15 @@ def run_epoch(q, k, train_info, test_info, heads, one_hot, gas_keys):
             #         pic_count += 1
             #         if pic_count > 5:
             #             break
-
+            input_sequences = None
+            output_scores = None
+            train_data = None
+            gc.collect()
             print("Test set")
 
             random.shuffle(test_info)
-            testinfo_small = test_info[:1000]
-            # testinfo_small = test_info
+            # testinfo_small = test_info[:1000]
+            testinfo_small = test_info
             # preparing test output tracks
             final_test_pred = {}
             test_output = {}
@@ -324,7 +327,7 @@ def run_epoch(q, k, train_info, test_info, heads, one_hot, gas_keys):
                 print(f"Using head {head_id}")
                 our_model.get_layer("last_conv1d").set_weights(joblib.load(model_folder + "/head" + str(head_id)))
                 chosen_tracks = head
-                del gas
+                gas = None
                 gc.collect()
                 gas = {}
                 for i, key in enumerate(chosen_tracks):
@@ -567,7 +570,7 @@ if __name__ == '__main__':
         head1 = gas_keys[:5000]
         head2 = gas_keys[5000:]
         random.shuffle(head1)
-        head2.extend(head1[:(out_stack_num - len(head1))])
+        head2.extend(head1[:(out_stack_num - len(head2))])
         heads.append(head1)
         heads.append(head2)
         joblib.dump(heads, "pickle/heads.gz", compress=3)

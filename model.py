@@ -20,7 +20,7 @@ CHANNELS_NUM = 256
 
 
 def simple_model(input_size, num_regions, cell_num):
-    input_shape = (input_size, 4)
+    input_shape = (input_size, 5)
     inputs = Input(shape=input_shape)
     x = inputs
     # x = Dropout(0.2)(x)
@@ -32,7 +32,8 @@ def simple_model(input_size, num_regions, cell_num):
         x = Conv1D(CHANNELS_NUM, kernel_size=3, dilation_rate=2 ** (i+1),
                    name="dilatation_" + str(i+1), padding='same')(x)
         x = BatchNormalization(name="bn_dilation_" + str(i+1))(x)
-        x = Add()([x, prev])
+        if i != 0:
+            x = Add()([x, prev])
         x = LeakyReLU(alpha=0.1, name="act_dilation_" + str(i+1))(x)
 
     # encoded_patches = PatchEncoder(num_patches, projection_dim)(x)
