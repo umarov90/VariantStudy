@@ -16,7 +16,7 @@ transformer_units = [
     projection_dim,
 ]
 transformer_layers = 4
-CHANNELS_NUM = 512
+CHANNELS_NUM = 256
 
 
 def simple_model(input_size, num_regions, cell_num):
@@ -24,7 +24,7 @@ def simple_model(input_size, num_regions, cell_num):
     inputs = Input(shape=input_shape)
     x = inputs
     # x = Dropout(0.2)(x)
-    x = resnet_v2(x, 9, 2)
+    x = resnet_v2(x, 9, 4)
     num_patches = 313
     # x = Dropout(0.5)(x)
     for i in range(10):
@@ -129,7 +129,7 @@ def resnet_v2(input_x, num_stages, num_res_blocks):
             activation = 'relu'
             batch_normalization = True
             strides = 1
-            num_filters_out = int(num_filters_in * 1)
+            num_filters_out = int(num_filters_in * 1.1)
             if stage == 0:
                 if res_block == 0:  # first layer and first stage
                     activation = None
