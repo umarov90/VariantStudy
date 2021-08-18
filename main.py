@@ -30,8 +30,7 @@ import psutil
 import sys
 import parse_data as parser
 from datetime import datetime
-# import signal
-# signal.signal(signal.SIGCHLD, signal.SIG_IGN)
+import traceback
 import multiprocessing as mp
 matplotlib.use("agg")
 # from scipy.ndimage.filters import gaussian_filter
@@ -212,26 +211,26 @@ def run_epoch(q, k, train_info, test_info, heads, one_hot, gas_keys):
     print(datetime.now().strftime('[%H:%M:%S] ') + "Training")
     gc.collect()
     print_memory()
-    # if k != 0:
-    try:
-        train_data = wrap(input_sequences, output_scores, GLOBAL_BATCH_SIZE)
-        gc.collect()
-        our_model.fit(train_data, epochs=fit_epochs)
-        our_model.save(model_folder + "/" + model_name + "_temp.h5")
-        os.remove(model_folder + "/" + model_name)
-        os.rename(model_folder + "/" + model_name + "_temp.h5", model_folder + "/" + model_name)
-        joblib.dump(our_model.get_layer("last_conv1d").get_weights(),
-                    model_folder + "/head" + str(head_id) + "_temp", compress=3)
-        if os.path.exists(model_folder + "/head" + str(head_id)):
-            os.remove(model_folder + "/head" + str(head_id))
-        os.rename(model_folder + "/head" + str(head_id) + "_temp", model_folder + "/head" + str(head_id))
-        del train_data
-        gc.collect()
-    except Exception as e:
-        print(e)
-        print(datetime.now().strftime('[%H:%M:%S] ') + "Error while training.")
-        q.put(None)
-        return None
+    if k != 0:
+        try:
+            train_data = wrap(input_sequences, output_scores, GLOBAL_BATCH_SIZE)
+            gc.collect()
+            our_model.fit(train_data, epochs=fit_epochs)
+            our_model.save(model_folder + "/" + model_name + "_temp.h5")
+            os.remove(model_folder + "/" + model_name)
+            os.rename(model_folder + "/" + model_name + "_temp.h5", model_folder + "/" + model_name)
+            joblib.dump(our_model.get_layer("last_conv1d").get_weights(),
+                        model_folder + "/head" + str(head_id) + "_temp", compress=3)
+            if os.path.exists(model_folder + "/head" + str(head_id)):
+                os.remove(model_folder + "/head" + str(head_id))
+            os.rename(model_folder + "/head" + str(head_id) + "_temp", model_folder + "/head" + str(head_id))
+            del train_data
+            gc.collect()
+        except Exception as e:
+            print(e)
+            print(datetime.now().strftime('[%H:%M:%S] ') + "Error while training.")
+            q.put(None)
+            return None
 
     if k % 5 == 0:  # and k != 0
         print(datetime.now().strftime('[%H:%M:%S] ') + "Evaluating")
@@ -313,17 +312,26 @@ def run_epoch(q, k, train_info, test_info, heads, one_hot, gas_keys):
             print("Test set")
 
             random.shuffle(test_info)
-            # testinfo_small = test_info[:1000]
-            testinfo_small = test_info
+            testinfo_small = test_info[:1000]
+            # testinfo_small = test_info
             # preparing test output tracks
             final_test_pred = {}
             test_output = {}
             for i in range(len(testinfo_small)):
                 final_test_pred[testinfo_small[i][2]] = {}
                 test_output[testinfo_small[i][2]] = {}
-            for head in heads:
+            for head_id, head in enumerate(heads):
+                print(f"Using head {head_id}")
+                our_model.get_layer("last_conv1d").set_weights(joblib.load(model_folder + "/head" + str(head_id)))
                 chosen_tracks = head
-                for shift_val in [-1 * bin_size, 0, bin_size]:  # -2 * bin_size, -1 * bin_size, 0, bin_size, 2 * bin_size
+                del gas
+                gc.collect()
+                gas = {}
+                for i, key in enumerate(chosen_tracks):
+                    if i % 500 == 0:
+                        print(i, end=" ")
+                    gas[key] = joblib.load("parsed_tracks/" + key)
+                for shift_val in [0]:  # -2 * bin_size, -1 * bin_size, 0, bin_size, 2 * bin_size
                     test_seq = []
                     for info in testinfo_small:
                         start = int(info[1] + shift_val - half_size)
@@ -331,13 +339,11 @@ def run_epoch(q, k, train_info, test_info, heads, one_hot, gas_keys):
                         if len(ns) != input_size:
                             continue
                         start_bin = int(info[1] / bin_size) - half_num_regions
-                        scores = []
-                        for key in chosen_tracks:
-                            scores.append(gas[key][info[0]][start_bin: start_bin + num_regions])
-                            if shift_val == 0:
+                        if shift_val == 0:
+                            for key in chosen_tracks:
                                 test_output[info[2]][key] = gas[key][info[0]][mid_bin]
                         test_seq.append(ns)
-                    for comp in [True, False]:
+                    for comp in [False]:
                         if comp:
                             with Pool(4) as p:
                                 rc_arr = p.map(change_seq, test_seq)
@@ -512,6 +518,7 @@ def run_epoch(q, k, train_info, test_info, heads, one_hot, gas_keys):
             #         plt.close(fig)
         except Exception as e:
             print(e)
+            traceback.print_exc()
             print(datetime.now().strftime('[%H:%M:%S] ') + "Problem during evaluation")
     print(datetime.now().strftime('[%H:%M:%S] ') + "Epoch " + str(k) + " finished. ")
     q.put(None)
@@ -529,9 +536,6 @@ def recover_shape(v, size_X):
     X[np.triu_indices(X.shape[0], k=1)] = v
     X = X + X.T
     return X
-
-
-
 
 
 def change_seq(x):
@@ -562,7 +566,6 @@ if __name__ == '__main__':
         heads = joblib.load("pickle/heads.gz")
     else:
         random.shuffle(gas_keys)
-        chosen_tracks = gas_keys
         heads = []
         head1 = gas_keys[:2000]
         head2 = gas_keys[2000:4000]
@@ -601,17 +604,17 @@ if __name__ == '__main__':
         p.start()
         print(q.get())
         p.join()
-        time.sleep(2)
+        time.sleep(1)
 
     # p = mp.Process(target=recompile, args=(q,))
     # p.start()
     # print(q.get())
     # p.join()
-    # time.sleep(2)
+    # time.sleep(1)
 
     for k in range(num_epochs):
         p = mp.Process(target=run_epoch, args=(q, k, train_info, test_info, heads, one_hot,gas_keys,))
         p.start()
         print(q.get())
         p.join()
-        time.sleep(2)
+        time.sleep(1)
