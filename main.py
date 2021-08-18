@@ -58,9 +58,9 @@ num_hic_bins = int(input_size / hic_bin_size)
 num_regions = 201  # int(input_size / bin_size)
 half_num_regions = 100
 mid_bin = math.floor(num_regions / 2)
-BATCH_SIZE = 3
+BATCH_SIZE = 1
 out_stack_num = 5000
-STEPS_PER_EPOCH = 2000
+STEPS_PER_EPOCH = 4000
 chromosomes = ["chrX"]  # "chrY"
 for i in range(1, 23):
     chromosomes.append("chr" + str(i))
