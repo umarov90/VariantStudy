@@ -20,11 +20,11 @@ CHANNELS_NUM = 256
 
 
 def simple_model(input_size, num_regions, cell_num):
-    input_shape = (input_size, 5)
+    input_shape = (input_size, 4)
     inputs = Input(shape=input_shape)
     x = inputs
     # x = Dropout(0.2)(x)
-    x = resnet_v2(x, 9, 4)
+    x = resnet_v2(x, 9, 5)
     num_patches = 313
     # x = Dropout(0.5)(x)
     for i in range(10):
