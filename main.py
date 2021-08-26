@@ -2,12 +2,12 @@ import os
 
 import joblib
 
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+# os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 # os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 # os.environ["CUDA_VISIBLE_DEVICES"] = '2'
 import logging
 
-logging.getLogger("tensorflow").setLevel(logging.ERROR)
+# logging.getLogger("tensorflow").setLevel(logging.ERROR)
 import gc
 import random
 import pandas as pd
@@ -32,6 +32,7 @@ import parse_data as parser
 from datetime import datetime
 import traceback
 import multiprocessing as mp
+import pickle
 matplotlib.use("agg")
 # from scipy.ndimage.filters import gaussian_filter
 # from sam import SAM
@@ -46,7 +47,7 @@ matplotlib.use("agg")
 # random.seed(seed)
 # np.random.seed(seed)
 # tf.random.set_seed(seed)
-model_folder = "model2"
+model_folder = "model3"
 model_name = "expression_model_1.h5"
 figures_folder = "figures_1"
 input_size = 80001
@@ -58,9 +59,9 @@ num_hic_bins = int(input_size / hic_bin_size)
 num_regions = 201  # int(input_size / bin_size)
 half_num_regions = 100
 mid_bin = math.floor(num_regions / 2)
-BATCH_SIZE = 1
-out_stack_num = 5000
-STEPS_PER_EPOCH = 4000
+BATCH_SIZE = 8
+out_stack_num = 9373
+STEPS_PER_EPOCH = 400
 chromosomes = ["chrX"]  # "chrY"
 for i in range(1, 23):
     chromosomes.append("chr" + str(i))
@@ -110,7 +111,7 @@ def create_model(q, heads):
     q.put(None)
 
 
-def run_epoch(q, k, train_info, test_info, heads, one_hot, gas_keys):
+def run_epoch(q, k, train_info, test_info, heads, one_hot, gas_keys, eval_tracks, test_output, protein_coding):
     import tensorflow as tf
     from tensorflow.keras import mixed_precision
     mixed_precision.set_global_policy('mixed_float16')
@@ -118,6 +119,14 @@ def run_epoch(q, k, train_info, test_info, heads, one_hot, gas_keys):
 
     def wrap(input_sequences, output_scores, bs):
         train_data = tf.data.Dataset.from_tensor_slices((input_sequences, output_scores))
+        train_data = train_data.batch(bs)
+        options = tf.data.Options()
+        options.experimental_distribute.auto_shard_policy = tf.data.experimental.AutoShardPolicy.DATA
+        train_data = train_data.with_options(options)
+        return train_data
+
+    def wrap2(input_sequences, bs):
+        train_data = tf.data.Dataset.from_tensor_slices(input_sequences)
         train_data = train_data.batch(bs)
         options = tf.data.Options()
         options.experimental_distribute.auto_shard_policy = tf.data.experimental.AutoShardPolicy.DATA
@@ -137,7 +146,7 @@ def run_epoch(q, k, train_info, test_info, heads, one_hot, gas_keys):
 
     input_sequences = []
     output_scores = []
-    print(datetime.now().strftime('[%H:%M:%S] ') + "Loading the tracks")
+    print(datetime.now().strftime('[%H:%M:%S] ') + "Loading the model")
     # chosen_tracks = random.sample(list(set(gas_keys)), out_stack_num) # - set(eval_tracks)
     # - len(hic_keys) * (hic_track_size)
     # if k == 0:
@@ -151,68 +160,70 @@ def run_epoch(q, k, train_info, test_info, heads, one_hot, gas_keys):
                                                custom_objects={'SAMModel': mo.SAMModel,
                                                                'PatchEncoder': mo.PatchEncoder})
     our_model.get_layer("last_conv1d").set_weights(joblib.load(model_folder + "/head" + str(head_id)))
-    gas = {}
-    for i, key in enumerate(chosen_tracks):
-        if i % 500 == 0:
-            print(i, end=" ")
-        gas[key] = joblib.load("parsed_tracks/" + key)
-    print("")
+
     print(datetime.now().strftime('[%H:%M:%S] ') + "Preparing sequences")
     err = 0
-    rands = []
     for i, info in enumerate(train_info):
         if len(input_sequences) >= GLOBAL_BATCH_SIZE * STEPS_PER_EPOCH:
             break
+        if info[0] not in chromosomes:
+            continue
         if i % 500 == 0:
             print(i, end=" ")
             gc.collect()
         try:
             rand_var = random.randint(0, max_shift)
             start = int(info[1] + (rand_var - max_shift / 2) - half_size)
-            if info[0] not in chromosomes:
-                rands.append(-1)
+            extra = start + input_size - len(one_hot[info[0]])
+            if start < 0 or extra > 0:
                 continue
-            ns = one_hot[info[0]][start:start + input_size]
-            if len(ns) == input_size:
-                rands.append(rand_var)
+            if start < 0:
+                ns = one_hot[info[0]][0:start + input_size]
+                ns = np.concatenate((np.zeros((-1*start, 4)), ns))
+            elif extra > 0:
+                ns = one_hot[info[0]][start: len(one_hot[info[0]])]
+                ns = np.concatenate((ns, np.zeros((extra, 4))))
             else:
-                rands.append(-1)
-                continue
+                ns = one_hot[info[0]][start:start + input_size]
             start_bin = int(info[1] / bin_size) - half_num_regions
             scores = []
             for key in chosen_tracks:
-                # scores.append([info[0], start_bin, start_bin + num_regions])
-                scores.append(gas[key][info[0]][start_bin: start_bin + num_regions])
+                scores.append([info[0], start_bin, start_bin + num_regions])
+                # scores.append(gas[key][info[0]][start_bin: start_bin + num_regions])
             input_sequences.append(ns)
             output_scores.append(scores)
         except Exception as e:
             print(e)
             err += 1
-    # print("loading in the values")
-    # for i, key in enumerate(chosen_tracks):
-    #     if i % 10 == 0:
-    #         print(i, end=" ")
-    #     parsed_track = joblib.load("parsed_tracks/" + key)
-    #     for s in output_scores:
-    #         s[i] = parsed_track[s[i][0]][s[i][1]:s[i][2]].copy()
+    print("")
+    print(datetime.now().strftime('[%H:%M:%S] ') + "Loading parsed tracks")
+    for i, key in enumerate(chosen_tracks):
+        if i % 100 == 0:
+            print(i, end=" ")
+            gc.collect()
+        parsed_track = joblib.load("parsed_tracks/" + key)
+        for s in output_scores:
+            s[i] = parsed_track[s[i][0]][s[i][1]:s[i][2]].copy()
     print("")
     print(datetime.now().strftime('[%H:%M:%S] ') + "Problems: " + str(err))
     gc.collect()
     print_memory()
     output_scores = np.asarray(output_scores, dtype=np.float16)
-    input_sequences = np.asarray(input_sequences)
+    input_sequences = np.asarray(input_sequences, dtype=np.float16)
     gc.collect()
     print_memory()
     for name, size in sorted(((name, sys.getsizeof(value)) for name, value in locals().items()),
                              key=lambda x: -x[1])[:10]:
         print("{:>30}: {:>8}".format(name, cm.get_human_readable(size)))
-    fit_epochs = 2
+
 
     print(datetime.now().strftime('[%H:%M:%S] ') + "Training")
     gc.collect()
     print_memory()
+
     # if k != 0:
     try:
+        fit_epochs = 4
         train_data = wrap(input_sequences, output_scores, GLOBAL_BATCH_SIZE)
         gc.collect()
         our_model.fit(train_data, epochs=fit_epochs)
@@ -235,26 +246,51 @@ def run_epoch(q, k, train_info, test_info, heads, one_hot, gas_keys):
     if k % 5 == 0:  # and k != 0
         print(datetime.now().strftime('[%H:%M:%S] ') + "Evaluating")
         try:
-            print("Training set")
-            predictions = our_model.predict(input_sequences[0:1000], batch_size=1)
+            # print("Training set")
+            # predictions = our_model.predict(wrap2(input_sequences[0:1000], GLOBAL_BATCH_SIZE))
+            #
+            # corrs = {}
+            # for it, ct in enumerate(chosen_tracks):
+            #     type = ct[ct.find("tracks_") + len("tracks_"):ct.find(".")]
+            #     a = []
+            #     b = []
+            #     for i in range(len(predictions)):
+            #         a.append(predictions[i][it][mid_bin])
+            #         b.append(output_scores[i][it][mid_bin])
+            #     corrs.setdefault(type, []).append((stats.spearmanr(a, b)[0], ct))
+            #
+            # for track_type in corrs.keys():
+            #     print(f"{track_type} correlation : {np.mean([i[0] for i in corrs[track_type]])}")
+            #
+            # with open("result_cage_train.csv", "w+") as myfile:
+            #     for ccc in corrs["CAGE"]:
+            #         myfile.write(str(ccc[0]) + "," + str(ccc[1]))
+            #         myfile.write("\n")
+            #
+            # print("Across all genes corrs")
+            # corrs = {}
+            # a = {}
+            # b = {}
+            # for gene in range(len(predictions)):
+            #     for it, track in enumerate(chosen_tracks):
+            #         type = track[track.find("tracks_") + len("tracks_"):track.find(".")]
+            #         if type != "CAGE":
+            #             continue
+            #         if track not in eval_tracks:
+            #             continue
+            #         a.setdefault(gene, []).append(predictions[gene][it][mid_bin])
+            #         b.setdefault(gene, []).append(output_scores[gene][it][mid_bin])
+            # a1 = []
+            # b1 = []
+            # for key in a.keys():
+            #     pred_mean = np.mean(a[key])
+            #     gt_mean = np.mean(b[key])
+            #     a1.append(pred_mean)
+            #     b1.append(gt_mean)
+            #
+            # acorr = stats.spearmanr(a1, b1)[0]
+            # print(f"Across all genes spearmanr {acorr}")
 
-            corrs = {}
-            for it, ct in enumerate(chosen_tracks):
-                type = ct[ct.find("tracks_") + len("tracks_"):ct.find(".")]
-                a = []
-                b = []
-                for i in range(len(predictions)):
-                    a.append(predictions[i][it][mid_bin])
-                    b.append(output_scores[i][it][mid_bin])
-                corrs.setdefault(type, []).append((stats.spearmanr(a, b)[0], ct))
-
-            for track_type in corrs.keys():
-                print(f"{track_type} correlation : {np.mean([i[0] for i in corrs[track_type]])}")
-
-            with open("result_cage_train.csv", "w+") as myfile:
-                for ccc in corrs["CAGE"]:
-                    myfile.write(str(ccc[0]) + "," + str(ccc[1]))
-                    myfile.write("\n")
             #
             # print("Drawing tracks")
             #
@@ -308,131 +344,222 @@ def run_epoch(q, k, train_info, test_info, heads, one_hot, gas_keys):
             #         pic_count += 1
             #         if pic_count > 5:
             #             break
-            input_sequences = None
-            output_scores = None
-            train_data = None
-            gc.collect()
+            # input_sequences = None
+            # output_scores = None
+            # train_data = None
+            # gc.collect()
             print("Test set")
+            if Path("pickle/final_test_predq.gz").is_file():
+                with open('pickle/final_test_pred.gz', 'rb') as handle:
+                    final_test_pred = pickle.load(handle)
+            else:
+                # preparing test output tracks
+                final_test_pred = {}
+                for i in range(len(test_info)):
+                    final_test_pred[test_info[i][2]] = {}
 
-            random.shuffle(test_info)
-            # testinfo_small = test_info[:1000]
-            testinfo_small = test_info
-            # preparing test output tracks
-            final_test_pred = {}
-            test_output = {}
-            for i in range(len(testinfo_small)):
-                final_test_pred[testinfo_small[i][2]] = {}
-                test_output[testinfo_small[i][2]] = {}
-            for head_id, head in enumerate(heads):
-                print(f"Using head {head_id}")
-                our_model.get_layer("last_conv1d").set_weights(joblib.load(model_folder + "/head" + str(head_id)))
-                chosen_tracks = head
-                gas = None
-                gc.collect()
-                gas = {}
-                for i, key in enumerate(chosen_tracks):
-                    if i % 500 == 0:
+                for head_id, head in enumerate(heads):
+                    print(f"Using head {head_id}")
+                    chosen_tracks = head
+                    our_model.get_layer("last_conv1d").set_weights(joblib.load(model_folder + "/head" + str(head_id)))
+                    for shift_val in [0]:  # -2 * bin_size, -1 * bin_size, 0, bin_size, 2 * bin_size
+                        test_seq = []
+                        for info in test_info:
+                            start = int(info[1] + shift_val - half_size)
+                            extra = start + input_size - len(one_hot[info[0]])
+                            if start < 0:
+                                ns = one_hot[info[0]][0:start + input_size]
+                                ns = np.concatenate((np.zeros((-1*start, 4)), ns))
+                            elif extra > 0:
+                                ns = one_hot[info[0]][start: len(one_hot[info[0]])]
+                                ns = np.concatenate((ns, np.zeros((extra, 4))))
+                            else:
+                                ns = one_hot[info[0]][start:start + input_size]
+                            if len(ns) != input_size:
+                                print(f"Wrong! {ns.shape} {start} {extra} {info[1]}")
+                            test_seq.append(ns)
+                        for comp in [False]:
+                            if comp:
+                                with Pool(4) as p:
+                                    rc_arr = p.map(change_seq, test_seq)
+                                test_seq = rc_arr
+                            test_seq = np.asarray(test_seq, dtype=np.float16)
+                            if comp:
+                                correction = 1 * int(shift_val / bin_size)
+                            else:
+                                correction = -1 * int(shift_val / bin_size)
+                            print(f"\n{shift_val} {comp} {test_seq.shape} predicting")
+                            predictions = None
+                            for w in range(0, len(test_seq), 1000):
+                                print(w, end=" ")
+                                gc.collect()
+                                if w == 0:
+                                    predictions = our_model.predict(wrap2(test_seq[w:w+1000], GLOBAL_BATCH_SIZE))[:, :, mid_bin + correction]
+                                else:
+                                    new_predictions = our_model.predict(wrap2(test_seq[w:w + 1000], GLOBAL_BATCH_SIZE))[:, :, mid_bin + correction]
+                                    predictions = np.concatenate((predictions, new_predictions), dtype=np.float16)
+                            for i in range(len(test_info)):
+                                for it, ct in enumerate(chosen_tracks):
+                                    final_test_pred[test_info[i][2]].setdefault(ct, []).append(predictions[i][it])
+                            print(f"{shift_val} {comp} finished")
+                            predictions = None
+                            gc.collect()
+
+                for i, gene in enumerate(final_test_pred.keys()):
+                    if i % 10 == 0:
                         print(i, end=" ")
-                    gas[key] = joblib.load("parsed_tracks/" + key)
-                for shift_val in [-1 * bin_size, 0, bin_size]:  # -2 * bin_size, -1 * bin_size, 0, bin_size, 2 * bin_size
-                    test_seq = []
-                    for info in testinfo_small:
-                        start = int(info[1] + shift_val - half_size)
-                        ns = one_hot[info[0]][start:start + input_size]
-                        if len(ns) != input_size:
-                            continue
-                        start_bin = int(info[1] / bin_size) - half_num_regions
-                        if shift_val == 0:
-                            for key in chosen_tracks:
-                                test_output[info[2]][key] = gas[key][info[0]][start_bin: start_bin + num_regions][mid_bin]
-                        test_seq.append(ns)
-                    for comp in [True, False]:
-                        if comp:
-                            with Pool(4) as p:
-                                rc_arr = p.map(change_seq, test_seq)
-                            test_seq = rc_arr
-                        test_seq = np.asarray(test_seq)
-                        if comp:
-                            correction = 1 * int(shift_val / bin_size)
-                        else:
-                            correction = -1 * int(shift_val / bin_size)
-                        print(f"{shift_val} {comp} predicting")
-                        predictions = our_model.predict(test_seq, batch_size=GLOBAL_BATCH_SIZE)
-                        for i in range(len(testinfo_small)):
-                            for it, ct in enumerate(chosen_tracks):
-                                final_test_pred[testinfo_small[i][2]].setdefault(ct, []).\
-                                    append(predictions[i][it][mid_bin + correction])
-                                # + \
-                                # predictions[i][it][mid_bin + correction] + \
-                                # predictions[i][it][mid_bin + correction + 1]
-                        print(f"{shift_val} {comp} finished")
+                    for track in gas_keys:
+                        final_test_pred[gene][track] = np.mean(final_test_pred[gene][track])
+
+                # with open('pickle/final_test_pred.gz', 'wb') as handle:
+                #     pickle.dump(final_test_pred, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
             # test_output = np.asarray(test_output).astype(np.float16)
 
-            print("Across all genes corrs")
-            corrs = {}
-            a = {}
-            b = {}
+            corr_p = []
+            corr_s = []
             for gene in final_test_pred.keys():
+                if gene not in protein_coding:
+                    continue
+                a = []
+                b = []
                 for track in gas_keys:
                     type = track[track.find("tracks_") + len("tracks_"):track.find(".")]
                     if type != "CAGE":
                         continue
-                    a.setdefault(gene, []).append(np.mean(final_test_pred[gene][track]))
-                    b.setdefault(gene, []).append(test_output[gene][track])
-            a1 = []
-            b1 = []
-            for key in a.keys():
-                pred_mean = np.mean(a[key])
-                gt_mean = np.mean(b[key])
-                a1.append(pred_mean)
-                b1.append(gt_mean)
+                    if track not in eval_tracks:
+                        continue
+                    a.append(final_test_pred[gene][track])
+                    b.append(test_output[gene][track])
+                pc = stats.pearsonr(a, b)[0]
+                sc = stats.spearmanr(a, b)[0]
+                if not math.isnan(sc) and not math.isnan(pc):
+                    corr_p.append(pc)
+                    corr_s.append(sc)
+            # a1 = []
+            # b1 = []
+            # for key in a.keys():
+            #     pred_mean = np.mean(a[key])
+            #     gt_mean = np.mean(b[key])
+            #     a1.append(pred_mean)
+            #     b1.append(gt_mean)
 
-            acorr = stats.pearsonr(a1, b1)[0]
-            print(f"Across all genes pearsonr {acorr}")
+            print(f"Maybe this 44444444444444 {len(corr_p)} {np.mean(corr_p)} {np.mean(corr_s)}")
 
+            # a = {}
+            # b = {}
+            # for gene in final_test_pred.keys():
+            #     if gene not in protein_coding:
+            #         continue
+            #     for track in gas_keys:
+            #         type = track[track.find("tracks_") + len("tracks_"):track.find(".")]
+            #         if type != "CAGE":
+            #             continue
+            #         if track not in eval_tracks:
+            #             continue
+            #         a.setdefault(gene, []).append(final_test_pred[gene][track])
+            #         b.setdefault(gene, []).append(test_output[gene][track])
+            # a1 = []
+            # b1 = []
+            # for key in a.keys():
+            #     pred_mean = np.mean(a[key])
+            #     gt_mean = np.mean(b[key])
+            #     a1.append(pred_mean)
+            #     b1.append(gt_mean)
+            #
+            # print(f"Across all genes eval tracks protein coding {stats.pearsonr(a1, b1)[0]} {stats.spearmanr(a1, b1)[0]}")
+            #
+            # a = {}
+            # b = {}
+            # for gene in final_test_pred.keys():
+            #     if gene not in protein_coding:
+            #         continue
+            #     for track in gas_keys:
+            #         type = track[track.find("tracks_") + len("tracks_"):track.find(".")]
+            #         if type != "CAGE":
+            #             continue
+            #         if track not in eval_tracks:
+            #             continue
+            #         a.setdefault(gene, []).append(final_test_pred[gene][track])
+            #         b.setdefault(gene, []).append(test_output[gene][track])
+            # a1 = []
+            # b1 = []
+            # for key in a.keys():
+            #     pred_mean = np.mean(a[key])
+            #     gt_mean = np.mean(b[key])
+            #     a1.append(pred_mean)
+            #     b1.append(gt_mean)
+            #
+            # print(
+            #     f"Across all genes eval tracks protein coding {stats.pearsonr(a1, b1)[0]} {stats.spearmanr(a1, b1)[0]}")
+            #
+            # a = {}
+            # b = {}
+            # for gene in final_test_pred.keys():
+            #     if gene not in protein_coding:
+            #         continue
+            #     for track in gas_keys:
+            #         type = track[track.find("tracks_") + len("tracks_"):track.find(".")]
+            #         if type != "CAGE":
+            #             continue
+            #         a.setdefault(gene, []).append(final_test_pred[gene][track])
+            #         b.setdefault(gene, []).append(test_output[gene][track])
+            # a1 = []
+            # b1 = []
+            # for key in a.keys():
+            #     pred_mean = np.mean(a[key])
+            #     gt_mean = np.mean(b[key])
+            #     a1.append(pred_mean)
+            #     b1.append(gt_mean)
+            #
+            # print(f"Across all genes all tracks protein coding {stats.pearsonr(a1, b1)[0]} {stats.spearmanr(a1, b1)[0]}")
 
-            # print("Protein coding corrs")
-            # corrs = {}
-            # for it, ct in enumerate(chosen_tracks):
-            #     type = ct[ct.find("tracks_") + len("tracks_"):ct.find(".")]
+            # print("Accross tracks")
+            # corrs_p = {}
+            # corrs_s = {}
+            # for track in gas_keys:
+            #     type = track[track.find("tracks_") + len("tracks_"):track.find(".")]
             #     a = []
             #     b = []
-            #     for i in range(len(final_test_pred)):
-            #         if testinfo_small[i][3] != "protein_coding":
-            #             continue
-            #         a.append(final_test_pred[i][it])
-            #         b.append(test_output[i][it][mid_bin])
-            #     corrs.setdefault(type, []).append((stats.spearmanr(a, b)[0], ct))
+            #     for gene in final_test_pred.keys():
+            #         a.append(final_test_pred[gene][track])
+            #         b.append(test_output[gene][track])
+            #     corrs_p.setdefault(type, []).append((stats.pearsonr(a, b)[0], track))
+            #     corrs_s.setdefault(type, []).append((stats.spearmanr(a, b)[0], track))
             #
-            # for track_type in corrs.keys():
-            #     print(f"{track_type} correlation : {np.mean([i[0] for i in corrs[track_type]])}")
+            # for track_type in corrs_p.keys():
+            #     print(f"{track_type} correlation : {np.mean([i[0] for i in corrs_p[track_type]])} {np.mean([i[0] for i in corrs_s[track_type]])}")
 
-            print("Accross tracks pearsonr")
-            corrs = {}
+            print("Accross tracks protein coding")
+            corrs_p = {}
+            corrs_s = {}
             for track in gas_keys:
                 type = track[track.find("tracks_") + len("tracks_"):track.find(".")]
                 a = []
                 b = []
                 for gene in final_test_pred.keys():
-                    a.append(np.mean(final_test_pred[gene][track]))
+                    if gene not in protein_coding:
+                        continue
+                    a.append(final_test_pred[gene][track])
                     b.append(test_output[gene][track])
-                corrs.setdefault(type, []).append((stats.pearsonr(a, b)[0], track))
+                corrs_p.setdefault(type, []).append((stats.pearsonr(a, b)[0], track))
+                corrs_s.setdefault(type, []).append((stats.spearmanr(a, b)[0], track))
 
-            for track_type in corrs.keys():
-                print(f"{track_type} correlation : {np.mean([i[0] for i in corrs[track_type]])}")
+            for track_type in corrs_p.keys():
+                print(
+                    f"{track_type} correlation : {np.mean([i[0] for i in corrs_p[track_type]])} {np.mean([i[0] for i in corrs_s[track_type]])}")
 
             with open("result_cage_test.csv", "w+") as myfile:
-                for ccc in corrs["CAGE"]:
+                for ccc in corrs_p["CAGE"]:
                     myfile.write(str(ccc[0]) + "," + str(ccc[1]))
                     myfile.write("\n")
 
             with open("result.txt", "a+") as myfile:
                 myfile.write(datetime.now().strftime('[%H:%M:%S] ') + "\n")
-                for track_type in corrs.keys():
+                for track_type in corrs_p.keys():
                     myfile.write(str(track_type) + "\t")
-                for track_type in corrs.keys():
-                    myfile.write(str(np.mean([i[0] for i in corrs[track_type]])) + "\t")
+                for track_type in corrs_p.keys():
+                    myfile.write(str(np.mean([i[0] for i in corrs_p[track_type]])) + "\t")
                 myfile.write("\n")
 
             # print("Drawing tracks")
@@ -554,11 +681,11 @@ if __name__ == '__main__':
     Path(figures_folder + "/" + "tracks").mkdir(parents=True, exist_ok=True)
     Path(figures_folder + "/" + "hic").mkdir(parents=True, exist_ok=True)
 
-    ga, one_hot, train_info, test_info = parser.get_sequences(bin_size, chromosomes)
+    ga, one_hot, train_info, test_info, tss_loc = parser.get_sequences(bin_size, chromosomes)
     if Path("pickle/gas_keys.gz").is_file():
         gas_keys = joblib.load("pickle/gas_keys.gz")
     else:
-        gas_keys = parser.parse_tracks(ga, bin_size)
+        gas_keys = parser.parse_tracks(ga, bin_size, tss_loc, chromosomes)
 
     print("Number of tracks: " + str(len(gas_keys)))
 
@@ -567,12 +694,8 @@ if __name__ == '__main__':
     else:
         random.shuffle(gas_keys)
         heads = []
-        head1 = gas_keys[:5000]
-        head2 = gas_keys[5000:]
-        random.shuffle(head1)
-        head2.extend(head1[:(out_stack_num - len(head2))])
+        head1 = gas_keys
         heads.append(head1)
-        heads.append(head2)
         joblib.dump(heads, "pickle/heads.gz", compress=3)
 
     # random.shuffle(heads) need to add ids
@@ -587,7 +710,51 @@ if __name__ == '__main__':
     #     starttt = int(ti[1] / bin_size)
     #     aaa = gast[ti[0]][starttt]
     #     print(aaa)
-    # eval_tracks = pd.read_csv('eval_tracks.tsv', delimiter='\t').values.flatten()
+    if Path("pickle/eval_gas.gz").is_file():
+        eval_gas = joblib.load("pickle/eval_gas.gz")
+    else:
+        eval_tracks = pd.read_csv('eval_tracks.tsv', delimiter='\t').values.flatten()
+        eval_gas = []
+        for g in gas_keys:
+            found = False
+            for i in range(len(eval_tracks)):
+                if eval_tracks[i] in g:
+                    found = True
+                    break
+            if found:
+                eval_gas.append(g)
+        joblib.dump(eval_gas, "pickle/eval_gas.gz", compress=3)
+
+    if Path("pickle/test_output.gz").is_file():
+        # test_output = joblib.load("pickle/test_output.gz")
+        protein_coding = joblib.load("pickle/protein_coding.gz")
+        with open('pickle/test_output.gz', 'rb') as handle:
+            test_output = pickle.load(handle)
+        # joblib.dump(test_output, "pickle/test_output.gz", compress=0)
+    else:
+        test_output = {}
+        protein_coding = set([])
+        for i in range(len(test_info)):
+            test_output[test_info[i][2]] = {}
+            if test_info[i][3] == "protein_coding":
+                protein_coding.add(test_info[i][2])
+        for i, key in enumerate(gas_keys):
+            if i % 100 == 0:
+                print(i, end=" ")
+                gc.collect()
+            loaded_track = joblib.load("parsed_tracks/" + key)
+            for info in test_info:
+                test_output[info[2]].setdefault(key, []).append(loaded_track[info[0]][int(info[1] / bin_size)])
+        for i, gene in enumerate(test_output.keys()):
+            if i % 10 == 0:
+                print(i, end=" ")
+            for track in gas_keys:
+                test_output[gene][track] = np.mean(test_output[gene][track])
+        print("")
+        with open('pickle/test_output.gz', 'wb') as handle:
+            pickle.dump(test_output, handle, protocol=pickle.HIGHEST_PROTOCOL)
+        joblib.dump(protein_coding, "pickle/protein_coding.gz", compress=3)
+
     # mp.set_start_method('spawn', force=True)
     # try:
     #     mp.set_start_method('spawn')
@@ -609,7 +776,8 @@ if __name__ == '__main__':
     # time.sleep(1)
     print("Training starting")
     for k in range(num_epochs):
-        p = mp.Process(target=run_epoch, args=(q, k, train_info, test_info, heads, one_hot,gas_keys,))
+        # run_epoch(q, k, train_info, test_info, heads, one_hot,gas_keys,eval_gas)
+        p = mp.Process(target=run_epoch, args=(q, k, train_info, test_info, heads, one_hot,gas_keys,eval_gas,test_output,protein_coding,))
         p.start()
         print(q.get())
         p.join()

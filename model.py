@@ -16,7 +16,6 @@ transformer_units = [
     projection_dim,
 ]
 transformer_layers = 4
-CHANNELS_NUM = 256
 
 
 def simple_model(input_size, num_regions, cell_num):
@@ -29,7 +28,7 @@ def simple_model(input_size, num_regions, cell_num):
     # x = Dropout(0.5)(x)
     for i in range(10):
         prev = x
-        x = Conv1D(CHANNELS_NUM, kernel_size=3, dilation_rate=2 ** (i+1),
+        x = Conv1D(128, kernel_size=3, dilation_rate=2 ** (i+1),
                    name="dilatation_" + str(i+1), padding='same')(x)
         x = BatchNormalization(name="bn_dilation_" + str(i+1))(x)
         if i != 0:
@@ -116,7 +115,7 @@ def resnet_layer(inputs,
 
 def resnet_v2(input_x, num_stages, num_res_blocks):
     # Start model definition.
-    num_filters_in = CHANNELS_NUM
+    num_filters_in = 64
 
     # v2 performs Conv2D with BN-ReLU on input before splitting into 2 paths
     x = resnet_layer(inputs=input_x,
