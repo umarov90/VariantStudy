@@ -19,11 +19,6 @@ import numpy as np
 import common as cm
 from pathlib import Path
 from scipy import stats
-import matplotlib
-import matplotlib.pyplot as plt
-from heapq import nsmallest
-import copy
-import seaborn as sns
 from multiprocessing import Pool
 import shutil
 import psutil
@@ -33,6 +28,11 @@ from datetime import datetime
 import traceback
 import multiprocessing as mp
 import pickle
+from heapq import nsmallest
+import copy
+import matplotlib
+import matplotlib.pyplot as plt
+import seaborn as sns
 matplotlib.use("agg")
 # from scipy.ndimage.filters import gaussian_filter
 # from sam import SAM
@@ -47,21 +47,21 @@ matplotlib.use("agg")
 # random.seed(seed)
 # np.random.seed(seed)
 # tf.random.set_seed(seed)
-model_folder = "model3"
+model_folder = "model1"
 model_name = "expression_model_1.h5"
 figures_folder = "figures_1"
-input_size = 80001
+input_size = 120100
 half_size = int(input_size / 2)
-bin_size = 200
+bin_size = 100
 max_shift = 0
 hic_bin_size = 10000
 num_hic_bins = int(input_size / hic_bin_size)
-num_regions = 201  # int(input_size / bin_size)
-half_num_regions = 100
-mid_bin = math.floor(num_regions / 2)
-BATCH_SIZE = 8
-out_stack_num = 9373
-STEPS_PER_EPOCH = 400
+num_bins = 801  # int(input_size / bin_size)
+half_num_bins = 400
+mid_bin = math.floor(num_bins / 2)
+BATCH_SIZE = 1
+out_stack_num = 6011
+STEPS_PER_EPOCH = 500
 chromosomes = ["chrX"]  # "chrY"
 for i in range(1, 23):
     chromosomes.append("chr" + str(i))
@@ -91,7 +91,7 @@ def create_model(q, heads):
     import tensorflow as tf
     strategy = tf.distribute.experimental.MultiWorkerMirroredStrategy()
     with strategy.scope():
-        our_model = mo.simple_model(input_size, num_regions, out_stack_num)
+        our_model = mo.simple_model(input_size, num_bins, out_stack_num)
         print(datetime.now().strftime('[%H:%M:%S] ') + "Compiling model")
         lr = 0.0001
         with strategy.scope():
@@ -111,7 +111,7 @@ def create_model(q, heads):
     q.put(None)
 
 
-def run_epoch(q, k, train_info, test_info, heads, one_hot, gas_keys, eval_tracks, test_output, protein_coding):
+def run_epoch(q, k, train_info, test_info, one_hot, track_names, eval_track_names):
     import tensorflow as tf
     from tensorflow.keras import mixed_precision
     mixed_precision.set_global_policy('mixed_float16')
@@ -135,9 +135,7 @@ def run_epoch(q, k, train_info, test_info, heads, one_hot, gas_keys, eval_tracks
 
     GLOBAL_BATCH_SIZE = BATCH_SIZE * strategy.num_replicas_in_sync
 
-    head_id = k % len(heads)
-    print(datetime.now().strftime('[%H:%M:%S] ') + "Epoch " + str(k) + " Head " + str(head_id))
-    chosen_tracks = heads[head_id]
+    print(datetime.now().strftime('[%H:%M:%S] ') + "Epoch " + str(k))
     # rng_state = np.random.get_state()
     # np.random.shuffle(input_sequences)
     # np.random.set_state(rng_state)
@@ -147,19 +145,11 @@ def run_epoch(q, k, train_info, test_info, heads, one_hot, gas_keys, eval_tracks
     input_sequences = []
     output_scores = []
     print(datetime.now().strftime('[%H:%M:%S] ') + "Loading the model")
-    # chosen_tracks = random.sample(list(set(gas_keys)), out_stack_num) # - set(eval_tracks)
-    # - len(hic_keys) * (hic_track_size)
-    # if k == 0:
-    # for i in range(len(eval_tracks)):
-    #     for j in range(len(gas_keys)):
-    #         if eval_tracks[i] in gas_keys[j]:
-    #             chosen_tracks[i] = gas_keys[j]
-    #             break
     with strategy.scope():
         our_model = tf.keras.models.load_model(model_folder + "/" + model_name,
                                                custom_objects={'SAMModel': mo.SAMModel,
                                                                'PatchEncoder': mo.PatchEncoder})
-    our_model.get_layer("last_conv1d").set_weights(joblib.load(model_folder + "/head" + str(head_id)))
+    # our_model.get_layer("last_conv1d").set_weights(joblib.load(model_folder + "/head" + str(head_id)))
 
     print(datetime.now().strftime('[%H:%M:%S] ') + "Preparing sequences")
     err = 0
@@ -185,25 +175,12 @@ def run_epoch(q, k, train_info, test_info, heads, one_hot, gas_keys, eval_tracks
                 ns = np.concatenate((ns, np.zeros((extra, 4))))
             else:
                 ns = one_hot[info[0]][start:start + input_size]
-            start_bin = int(info[1] / bin_size) - half_num_regions
-            scores = []
-            for key in chosen_tracks:
-                scores.append([info[0], start_bin, start_bin + num_regions])
-                # scores.append(gas[key][info[0]][start_bin: start_bin + num_regions])
             input_sequences.append(ns)
-            output_scores.append(scores)
+            out_arr = joblib.load("parsed_data/" + info[-1] + ".gz")
+            output_scores.append(out_arr)
         except Exception as e:
             print(e)
             err += 1
-    print("")
-    print(datetime.now().strftime('[%H:%M:%S] ') + "Loading parsed tracks")
-    for i, key in enumerate(chosen_tracks):
-        if i % 100 == 0:
-            print(i, end=" ")
-            gc.collect()
-        parsed_track = joblib.load("parsed_tracks/" + key)
-        for s in output_scores:
-            s[i] = parsed_track[s[i][0]][s[i][1]:s[i][2]].copy()
     print("")
     print(datetime.now().strftime('[%H:%M:%S] ') + "Problems: " + str(err))
     gc.collect()
@@ -223,18 +200,18 @@ def run_epoch(q, k, train_info, test_info, heads, one_hot, gas_keys, eval_tracks
 
     # if k != 0:
     try:
-        fit_epochs = 4
+        fit_epochs = 2
         train_data = wrap(input_sequences, output_scores, GLOBAL_BATCH_SIZE)
         gc.collect()
         our_model.fit(train_data, epochs=fit_epochs)
         our_model.save(model_folder + "/" + model_name + "_temp.h5")
         os.remove(model_folder + "/" + model_name)
         os.rename(model_folder + "/" + model_name + "_temp.h5", model_folder + "/" + model_name)
-        joblib.dump(our_model.get_layer("last_conv1d").get_weights(),
-                    model_folder + "/head" + str(head_id) + "_temp", compress=3)
-        if os.path.exists(model_folder + "/head" + str(head_id)):
-            os.remove(model_folder + "/head" + str(head_id))
-        os.rename(model_folder + "/head" + str(head_id) + "_temp", model_folder + "/head" + str(head_id))
+        # joblib.dump(our_model.get_layer("last_conv1d").get_weights(),
+        #             model_folder + "/head" + str(head_id) + "_temp", compress=3)
+        # if os.path.exists(model_folder + "/head" + str(head_id)):
+        #     os.remove(model_folder + "/head" + str(head_id))
+        # os.rename(model_folder + "/head" + str(head_id) + "_temp", model_folder + "/head" + str(head_id))
         del train_data
         gc.collect()
     except Exception as e:
@@ -349,81 +326,72 @@ def run_epoch(q, k, train_info, test_info, heads, one_hot, gas_keys, eval_tracks
             # train_data = None
             # gc.collect()
             print("Test set")
-            if Path("pickle/final_test_predq.gz").is_file():
-                with open('pickle/final_test_pred.gz', 'rb') as handle:
-                    final_test_pred = pickle.load(handle)
-            else:
-                # preparing test output tracks
-                final_test_pred = {}
-                for i in range(len(test_info)):
-                    final_test_pred[test_info[i][2]] = {}
 
-                for head_id, head in enumerate(heads):
-                    print(f"Using head {head_id}")
-                    chosen_tracks = head
-                    our_model.get_layer("last_conv1d").set_weights(joblib.load(model_folder + "/head" + str(head_id)))
-                    for shift_val in [0]:  # -2 * bin_size, -1 * bin_size, 0, bin_size, 2 * bin_size
-                        test_seq = []
-                        for info in test_info:
-                            start = int(info[1] + shift_val - half_size)
-                            extra = start + input_size - len(one_hot[info[0]])
-                            if start < 0:
-                                ns = one_hot[info[0]][0:start + input_size]
-                                ns = np.concatenate((np.zeros((-1*start, 4)), ns))
-                            elif extra > 0:
-                                ns = one_hot[info[0]][start: len(one_hot[info[0]])]
-                                ns = np.concatenate((ns, np.zeros((extra, 4))))
-                            else:
-                                ns = one_hot[info[0]][start:start + input_size]
-                            if len(ns) != input_size:
-                                print(f"Wrong! {ns.shape} {start} {extra} {info[1]}")
-                            test_seq.append(ns)
-                        for comp in [False]:
-                            if comp:
-                                with Pool(4) as p:
-                                    rc_arr = p.map(change_seq, test_seq)
-                                test_seq = rc_arr
-                            test_seq = np.asarray(test_seq, dtype=np.float16)
-                            if comp:
-                                correction = 1 * int(shift_val / bin_size)
-                            else:
-                                correction = -1 * int(shift_val / bin_size)
-                            print(f"\n{shift_val} {comp} {test_seq.shape} predicting")
-                            predictions = None
-                            for w in range(0, len(test_seq), 1000):
-                                print(w, end=" ")
-                                gc.collect()
-                                if w == 0:
-                                    predictions = our_model.predict(wrap2(test_seq[w:w+1000], GLOBAL_BATCH_SIZE))[:, :, mid_bin + correction]
-                                else:
-                                    new_predictions = our_model.predict(wrap2(test_seq[w:w + 1000], GLOBAL_BATCH_SIZE))[:, :, mid_bin + correction]
-                                    predictions = np.concatenate((predictions, new_predictions), dtype=np.float16)
-                            for i in range(len(test_info)):
-                                for it, ct in enumerate(chosen_tracks):
-                                    final_test_pred[test_info[i][2]].setdefault(ct, []).append(predictions[i][it])
-                            print(f"{shift_val} {comp} finished")
-                            predictions = None
-                            gc.collect()
+            test_output = []
+            for i, info in enumerate(test_info):
+                out_arr = joblib.load("parsed_data/" + info[-1] + ".gz")
+                test_output.append(out_arr)
+            test_output = np.asarray(test_output, dtype=np.float16)
 
-                for i, gene in enumerate(final_test_pred.keys()):
-                    if i % 10 == 0:
-                        print(i, end=" ")
-                    for track in gas_keys:
-                        final_test_pred[gene][track] = np.mean(final_test_pred[gene][track])
+            final_test_pred = {}
+            for i in range(len(test_info)):
+                final_test_pred[test_info[i][2]] = {}
 
-                # with open('pickle/final_test_pred.gz', 'wb') as handle:
-                #     pickle.dump(final_test_pred, handle, protocol=pickle.HIGHEST_PROTOCOL)
+            for shift_val in [0]:  # -2 * bin_size, -1 * bin_size, 0, bin_size, 2 * bin_size
+                test_seq = []
+                for info in test_info:
+                    start = int(info[1] + shift_val - half_size)
+                    extra = start + input_size - len(one_hot[info[0]])
+                    if start < 0:
+                        ns = one_hot[info[0]][0:start + input_size]
+                        ns = np.concatenate((np.zeros((-1*start, 4)), ns))
+                    elif extra > 0:
+                        ns = one_hot[info[0]][start: len(one_hot[info[0]])]
+                        ns = np.concatenate((ns, np.zeros((extra, 4))))
+                    else:
+                        ns = one_hot[info[0]][start:start + input_size]
+                    if len(ns) != input_size:
+                        print(f"Wrong! {ns.shape} {start} {extra} {info[1]}")
+                    test_seq.append(ns)
+                for comp in [False]:
+                    if comp:
+                        with Pool(4) as p:
+                            rc_arr = p.map(change_seq, test_seq)
+                        test_seq = rc_arr
+                    test_seq = np.asarray(test_seq, dtype=np.float16)
+                    if comp:
+                        correction = 1 * int(shift_val / bin_size)
+                    else:
+                        correction = -1 * int(shift_val / bin_size)
+                    print(f"\n{shift_val} {comp} {test_seq.shape} predicting")
+                    predictions = None
+                    for w in range(0, len(test_seq), 1000):
+                        print(w, end=" ")
+                        gc.collect()
+                        if w == 0:
+                            predictions = our_model.predict(wrap2(test_seq[w:w+1000], GLOBAL_BATCH_SIZE))[:, :, mid_bin + correction]
+                        else:
+                            new_predictions = our_model.predict(wrap2(test_seq[w:w + 1000], GLOBAL_BATCH_SIZE))[:, :, mid_bin + correction]
+                            predictions = np.concatenate((predictions, new_predictions), dtype=np.float16)
+                    for i in range(len(test_info)):
+                        for it, ct in enumerate(track_names):
+                            final_test_pred[test_info[i][2]].setdefault(ct, []).append(predictions[i][it])
+                    print(f"{shift_val} {comp} finished")
+                    predictions = None
+                    gc.collect()
 
-            # test_output = np.asarray(test_output).astype(np.float16)
+            for i, gene in enumerate(final_test_pred.keys()):
+                if i % 10 == 0:
+                    print(i, end=" ")
+                for track in track_names:
+                    final_test_pred[gene][track] = np.mean(final_test_pred[gene][track])
 
             corr_p = []
             corr_s = []
             for gene in final_test_pred.keys():
-                if gene not in protein_coding:
-                    continue
                 a = []
                 b = []
-                for track in gas_keys:
+                for track in track_names:
                     type = track[track.find("tracks_") + len("tracks_"):track.find(".")]
                     if type != "CAGE":
                         continue
@@ -533,13 +501,11 @@ def run_epoch(q, k, train_info, test_info, heads, one_hot, gas_keys, eval_tracks
             print("Accross tracks protein coding")
             corrs_p = {}
             corrs_s = {}
-            for track in gas_keys:
+            for track in track_names:
                 type = track[track.find("tracks_") + len("tracks_"):track.find(".")]
                 a = []
                 b = []
                 for gene in final_test_pred.keys():
-                    if gene not in protein_coding:
-                        continue
                     a.append(final_test_pred[gene][track])
                     b.append(test_output[gene][track])
                 corrs_p.setdefault(type, []).append((stats.pearsonr(a, b)[0], track))
@@ -671,8 +637,8 @@ def change_seq(x):
 
 if __name__ == '__main__':
     # get the current folder absolute path
-    # os.chdir(open("data_dir").read().strip())
-    os.chdir("/home/acd13586qv/variants")
+    os.chdir(open("data_dir").read().strip())
+    # os.chdir("/home/acd13586qv/variants")
     # How does enformer handle strands???
     # read training notebook
     # our_model = mo.simple_model(input_size, num_regions, out_stack_num)
@@ -681,79 +647,35 @@ if __name__ == '__main__':
     Path(figures_folder + "/" + "tracks").mkdir(parents=True, exist_ok=True)
     Path(figures_folder + "/" + "hic").mkdir(parents=True, exist_ok=True)
 
-    ga, one_hot, train_info, test_info, tss_loc = parser.get_sequences(bin_size, chromosomes)
+    one_hot, train_info, test_info = parser.get_sequences(chromosomes, input_size)
     if Path("pickle/gas_keys.gz").is_file():
-        gas_keys = joblib.load("pickle/gas_keys.gz")
+        track_names = joblib.load("pickle/track_names.gz")
+        output_train = joblib.load("pickle/output_train.gz")
+        output_test = joblib.load("pickle/output_test.gz")
     else:
-        gas_keys = parser.parse_tracks(ga, bin_size, tss_loc, chromosomes)
+        track_names = parser.parse_tracks(train_info, test_info, bin_size, half_num_bins)
 
-    print("Number of tracks: " + str(len(gas_keys)))
+    print("Number of tracks: " + str(len(track_names)))
 
-    if Path("pickle/heads.gz").is_file():
-        heads = joblib.load("pickle/heads.gz")
-    else:
-        random.shuffle(gas_keys)
-        heads = []
-        head1 = gas_keys
-        heads.append(head1)
-        joblib.dump(heads, "pickle/heads.gz", compress=3)
-
-    # random.shuffle(heads) need to add ids
-    print("Heads loaded")
     print_memory()
     for name, size in sorted(((name, sys.getsizeof(value)) for name, value in locals().items()),
                              key=lambda x: -x[1])[:10]:
         print("{:>30}: {:>8}".format(name, cm.get_human_readable(size)))
 
-    # gast = parser.parse_one_track(ga, bin_size, "tracks/CAGE.RNA.ctss.adrenal_gland_adult_pool1.CNhs11793.FANTOM5.100nt.bed.gz")
-    # for ti in test_info:
-    #     starttt = int(ti[1] / bin_size)
-    #     aaa = gast[ti[0]][starttt]
-    #     print(aaa)
     if Path("pickle/eval_gas.gz").is_file():
-        eval_gas = joblib.load("pickle/eval_gas.gz")
+        eval_track_names = joblib.load("pickle/eval_track_names.gz")
     else:
         eval_tracks = pd.read_csv('eval_tracks.tsv', delimiter='\t').values.flatten()
-        eval_gas = []
-        for g in gas_keys:
+        eval_track_names = []
+        for tn in track_names:
             found = False
             for i in range(len(eval_tracks)):
-                if eval_tracks[i] in g:
+                if eval_tracks[i] in tn:
                     found = True
                     break
             if found:
-                eval_gas.append(g)
-        joblib.dump(eval_gas, "pickle/eval_gas.gz", compress=3)
-
-    if Path("pickle/test_output.gz").is_file():
-        # test_output = joblib.load("pickle/test_output.gz")
-        protein_coding = joblib.load("pickle/protein_coding.gz")
-        with open('pickle/test_output.gz', 'rb') as handle:
-            test_output = pickle.load(handle)
-        # joblib.dump(test_output, "pickle/test_output.gz", compress=0)
-    else:
-        test_output = {}
-        protein_coding = set([])
-        for i in range(len(test_info)):
-            test_output[test_info[i][2]] = {}
-            if test_info[i][3] == "protein_coding":
-                protein_coding.add(test_info[i][2])
-        for i, key in enumerate(gas_keys):
-            if i % 100 == 0:
-                print(i, end=" ")
-                gc.collect()
-            loaded_track = joblib.load("parsed_tracks/" + key)
-            for info in test_info:
-                test_output[info[2]].setdefault(key, []).append(loaded_track[info[0]][int(info[1] / bin_size)])
-        for i, gene in enumerate(test_output.keys()):
-            if i % 10 == 0:
-                print(i, end=" ")
-            for track in gas_keys:
-                test_output[gene][track] = np.mean(test_output[gene][track])
-        print("")
-        with open('pickle/test_output.gz', 'wb') as handle:
-            pickle.dump(test_output, handle, protocol=pickle.HIGHEST_PROTOCOL)
-        joblib.dump(protein_coding, "pickle/protein_coding.gz", compress=3)
+                eval_track_names.append(tn)
+        joblib.dump(eval_track_names, "pickle/eval_track_names.gz", compress=3)
 
     # mp.set_start_method('spawn', force=True)
     # try:
@@ -762,7 +684,7 @@ if __name__ == '__main__':
     #     pass
     q = mp.Queue()
     if not Path(model_folder + "/" + model_name).is_file():
-        p = mp.Process(target=create_model, args=(q,heads,))
+        p = mp.Process(target=create_model, args=(q,))
         p.start()
         print(q.get())
         p.join()
@@ -777,7 +699,7 @@ if __name__ == '__main__':
     print("Training starting")
     for k in range(num_epochs):
         # run_epoch(q, k, train_info, test_info, heads, one_hot,gas_keys,eval_gas)
-        p = mp.Process(target=run_epoch, args=(q, k, train_info, test_info, heads, one_hot,gas_keys,eval_gas,test_output,protein_coding,))
+        p = mp.Process(target=run_epoch, args=(q, k, train_info, test_info, one_hot, track_names, eval_track_names,))
         p.start()
         print(q.get())
         p.join()

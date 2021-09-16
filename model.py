@@ -23,7 +23,7 @@ def simple_model(input_size, num_regions, cell_num):
     inputs = Input(shape=input_shape)
     x = inputs
     # x = Dropout(0.2)(x)
-    x = resnet_v2(x, 9, 5)
+    x = resnet_v2(x, 8, 5)
     num_patches = 313
     # x = Dropout(0.5)(x)
     for i in range(10):
@@ -56,7 +56,7 @@ def simple_model(input_size, num_regions, cell_num):
     #
     # x = LayerNormalization(epsilon=1e-6, name="ln_rep")(encoded_patches)
 
-    target_length = 200
+    target_length = 801
     trim = (x.shape[-2] - target_length) // 2
     x = x[..., trim:-trim, :]
     x = Conv1D(2048, kernel_size=1, strides=1, name="pointwise", activation=tf.nn.gelu)(x)

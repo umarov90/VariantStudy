@@ -47,18 +47,17 @@ def clean_seq(s):
     return ns
 
 
-def parse_genome(g, bin, chr1=False):
+def parse_genome(g, chromosomes, chr1=False):
     fasta = {}
-    ga = {}
     seq = ""
     with open(g) as f:
         for line in f:
             if line.startswith(">"):
                 if len(seq) != 0:
-                    seq = clean_seq(seq)
-                    fasta[chrn] = seq
-                    ga[chrn] = np.zeros(int(len(seq)/bin) + 1, dtype=np.float32)
-                    # print(chrn + " - " + str(len(seq)))
+                    if chrn in chromosomes:
+                        seq = clean_seq(seq)
+                        fasta[chrn] = seq
+                        print(chrn + " - " + str(len(seq)))
                     if chr1:
                         return fasta
                 chrn = line.strip()[1:]
@@ -70,11 +69,11 @@ def parse_genome(g, bin, chr1=False):
             else:
                 seq += line
         if len(seq) != 0:
-            seq = clean_seq(seq)
-            fasta[chrn] = seq
-            ga[chrn] = np.zeros(int(len(seq)/bin) + 1, dtype=np.float32)
-            # print(chrn + " - " + str(len(seq)))
-    return fasta, ga
+            if chrn in chromosomes:
+                seq = clean_seq(seq)
+                fasta[chrn] = seq
+                print(chrn + " - " + str(len(seq)))
+    return fasta
 
 
 def parse_bed(reg_elements, path):
@@ -86,21 +85,21 @@ def parse_bed(reg_elements, path):
             reg_elements.setdefault(chrn, []).append(chrp)
 
 
-def rev_comp(s):
-    reversed_arr = s[::-1]
-    vals = []
-    for v in reversed_arr:
-        if v[0]:
-            vals.append([False, False, False, True])
-        elif v[1]:
-            vals.append([False, False, True, False])
-        elif v[2]:
-            vals.append([False, True, False, False])
-        elif v[3]:
-            vals.append([True, False, False, False])
-        else:
-            vals.append([False, False, False, False])
-    return np.array(vals, dtype=bool)
+# def rev_comp(s):
+#     reversed_arr = s[::-1]
+#     vals = []
+#     for v in reversed_arr:
+#         if v[0]:
+#             vals.append([False, False, False, True])
+#         elif v[1]:
+#             vals.append([False, False, True, False])
+#         elif v[2]:
+#             vals.append([False, True, False, False])
+#         elif v[3]:
+#             vals.append([True, False, False, False])
+#         else:
+#             vals.append([False, False, False, False])
+#     return np.array(vals, dtype=bool)
 
 
 def nuc_to_ind(nuc):

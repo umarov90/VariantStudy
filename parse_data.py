@@ -10,6 +10,12 @@ import math
 import time
 import copy
 import itertools as it
+import pyBigWig
+import matplotlib
+import matplotlib.pyplot as plt
+import seaborn as sns
+from multiprocessing import Pool, Manager
+import multiprocessing as mp
 
 
 def valid(chunks):
@@ -86,156 +92,105 @@ def parse_hic():
         return hic_keys
 
 
-def parse_tracks(ga, bin_size, tss_loc, chromosomes):
-    gas_keys = []
-    directory = "tracks"
-    for filename in os.listdir(directory):
-        if filename.endswith(".gz"):
-            start = time.time()
-            fn = os.path.join(directory, filename)
-            t_name = fn.replace("/", "_")
-            gas_keys.append(t_name)
-            # if Path("parsed_tracks/" + t_name).is_file():
-            #     continue
-            # print(t_name)
+def parse_tracks(train_info, test_info, bin_size, half_num_bins):
+    all_info = train_info + test_info
+    track_names = pd.read_csv('white_list.txt', delimiter='\t').values.flatten()
+    step_size = 500
+    q = mp.Queue()
+    ps = []
+    for t in range(0, len(all_info), step_size):
+        sub_info = all_info[t:t+step_size]
+        p = mp.Process(target=construct_tss_matrices,
+                       args=(q, sub_info, half_num_bins, bin_size,track_names,t,))
+        p.start()
+        ps.append(p)
+        if len(ps) >= 20:
+            for p in ps:
+                p.join()
+            print(q.get())
+            ps = []
 
-            gast = copy.deepcopy(ga)
-            dtypes = {"chr": str, "start": int, "end": int, "score": float}
-            df = pd.read_csv(fn, delim_whitespace=True, names=["chr", "start", "end", "score"],
-                             dtype=dtypes, header=None, index_col=False)
-
-            chrd = list(df["chr"].unique())
-            df["mid"] = (df["start"] + (df["end"] - df["start"]) / 2) / bin_size
-            df = df.astype({"mid": int})
-
-            # group the scores over `key` and gather them in a list
-            grouped_scores = df.groupby("chr").agg(list)
-
-            # for each key, value in the dictionary...
-            for key, val in gast.items():
-                if key not in chrd:
-                    continue
-                # first lookup the positions to update and the corresponding scores
-                pos, score = grouped_scores.loc[key, ["mid", "score"]]
-                # fancy indexing
-                gast[key][pos] += score
-
-            max_val = -1
-            all_vals = None
-            for key in gast.keys():
-                gast[key] = np.log(gast[key] + 1)
-                if key in chromosomes:
-                    max_val = max(np.max(gast[key]), max_val)
-                    if all_vals is not None:
-                        all_vals = np.concatenate((all_vals, gast[key][tss_loc[key]]))
-                    else:
-                        all_vals = gast[key][tss_loc[key]]
-            tss_loc_num = len(all_vals)
-            all_vals = all_vals[all_vals != 0]
-            all_vals.sort()
-            scale_val = all_vals[int(0.95 * len(all_vals))]
-            if scale_val == 0:
-                print(scale_val)
-            for key in gast.keys():
-                gast[key] = np.clip(gast[key], 0, scale_val) / scale_val
-            for key in gast.keys():
-                gast[key] = gast[key].astype(np.float16)
-            joblib.dump(gast, "parsed_tracks/" + t_name, compress="lz4")
-            end = time.time()
-            print(f"Parsed {t_name}. Elapsed time: {end - start}. Max value: {max_val}. Clip/Scale value: {scale_val}"
-                  f" based on {tss_loc_num} {len(all_vals)}")
-    joblib.dump(gas_keys, "pickle/gas_keys.gz", compress=3)
-    return gas_keys
+    if len(ps) > 0:
+        for p in ps:
+            p.join()
+        print(q.get())
+    joblib.dump(track_names, "pickle/track_names.gz", compress=3)
+    return track_names
 
 
-def get_sequences(bin_size, chromosomes):
-    if Path("pickle/genome.gz").is_file():
-        genome = joblib.load("pickle/genome.gz")
-        ga = joblib.load("pickle/ga.gz")
-    else:
-        genome, ga = cm.parse_genome("hg38.fa", bin_size)
-        joblib.dump(genome, "pickle/genome.gz", compress=3)
-        joblib.dump(ga, "pickle/ga.gz", compress=3)
+def construct_tss_matrices(q, sub_info, half_num_bins, bin_size, track_names, t):
+    print(f"Worker {t}")
+    output = []
+    for i in range(len(track_names)):
+        output.append([])
+    for ti, track in enumerate(track_names):
+        if ti % 500 == 0:
+            print(f"Worker {t} - {ti}")
+        bw = pyBigWig.open(f"bw/{track}.16nt.bigwig")
+        for i, info in enumerate(sub_info):
+            start = info[1] - half_num_bins * bin_size
+            end = info[1] + (1 + half_num_bins) * bin_size
+            out = bw.stats(info[0], start, end, type="mean", nBins=801)
+            out = np.asarray(out, dtype=np.float16)
+            out[np.isnan(out)] = 0
+            output[i].append(out)
+    for tss_track in output:
+        joblib.dump(np.asarray(tss_track, dtype=np.float16), "parsed_data/" + sub_info[-1] + ".gz", compress="lz4")
+    q.put(None)
 
+
+def get_sequences(chromosomes, input_size):
     if Path("pickle/one_hot.gz").is_file():
         one_hot = joblib.load("pickle/one_hot.gz")
     else:
+        print("Parsing genome")
+        genome = cm.parse_genome("data/hg38.fa", chromosomes)
         one_hot = {}
         for chromosome in chromosomes:
             one_hot[chromosome] = cm.encode_seq(genome[chromosome])
+        print("Saving one-hot encoding")
         joblib.dump(one_hot, "pickle/one_hot.gz", compress=3)
 
     if Path("pickle/train_info.gz").is_file():
         test_info = joblib.load("pickle/test_info.gz")
         train_info = joblib.load("pickle/train_info.gz")
-        tss_loc = joblib.load("pickle/tss_loc.gz")
     else:
-        gene_tss = pd.read_csv("TSS_flank_0.bed",
-                            sep="\t", index_col=False, names=["chrom", "start", "end", "geneID", "score", "strand"])
-        gene_info = pd.read_csv("gene.info.tsv", sep="\t", index_col=False)
-        prom_info = pd.read_csv("hg38.gencode_v32.promoter.window.info.tsv", sep="\t", index_col=False)
+        gene_tss = pd.read_csv("data/hg38.GENCODEv38.pc_lnc.TSS.bed",
+                               sep="\t", index_col=False, names=["chrom", "start", "end", "geneID", "score", "strand"])
+        gene_info = pd.read_csv("data/hg38.GENCODEv38.pc_lnc.gene.info.tsv", sep="\t", index_col=False)
+        prom_info = pd.read_csv("data/hg38.GENCODEv38.pc_lnc.promoter.window.info.tsv", sep="\t", index_col=False)
         test_info = []
-        tss_loc = {}
         # test_genes = prom_info.loc[(prom_info['chrom'] == "chr1") & (prom_info['max_overall_rank'] == 1)]
         # for index, row in test_genes.iterrows():
         #     vals = row["TSS_str"].split(";")
         #     pos = int(vals[int(len(vals) / 2)].split(",")[1])
         #     strand = vals[int(len(vals) / 2)].split(",")[2]
         #     test_info.append([row["chrom"], pos, row["geneID_str"], row["geneType_str"], strand])
+        print("Constructing test and train genes list")
         test_genes = gene_tss.loc[gene_tss['chrom'] == "chr1"]
         for index, row in test_genes.iterrows():
-            pos = int(row["start"])
+            pos = int(row["end"])
+            if row["chrom"] not in chromosomes or pos - input_size / 2 < 0 or pos + input_size > len(one_hot[row["chrom"]]):
+                continue
             gene_type = gene_info[gene_info['geneID'] == row["geneID"]]['geneType'].values[0]
             if gene_type != "protein_coding":
                 continue
-            test_info.append([row["chrom"], pos, row["geneID"], gene_type, row["strand"]])
-            tss_loc.setdefault(row["chrom"], []).append(int(pos/bin_size))
+            test_info.append([row["chrom"], pos, row["geneID"], gene_type, row["strand"], row["geneID"] + "_" + str(pos)])
 
         print(f"Test set complete {len(test_info)}")
         train_info = []
         train_genes = gene_tss.loc[gene_tss['chrom'] != "chr1"]
         for index, row in train_genes.iterrows():
-            pos = int(row["start"])
+            pos = int(row["end"])
+            if row["chrom"] not in chromosomes or pos - input_size / 2 < 0 or pos + input_size > len(one_hot[row["chrom"]]):
+                continue
             gene_type = gene_info[gene_info['geneID'] == row["geneID"]]['geneType'].values[0]
             if gene_type != "protein_coding":
                 continue
-            train_info.append([row["chrom"], pos, row["geneID"], gene_type, row["strand"]])
-            tss_loc.setdefault(row["chrom"], []).append(int(pos / bin_size))
+            train_info.append(
+                [row["chrom"], pos, row["geneID"], gene_type, row["strand"], row["geneID"] + "_" + str(pos)])
         print(f"Training set complete {len(train_info)}")
         joblib.dump(test_info, "pickle/test_info.gz", compress=3)
         joblib.dump(train_info, "pickle/train_info.gz", compress=3)
-        joblib.dump(tss_loc, "pickle/tss_loc.gz", compress=3)
         gc.collect()
-    return ga, one_hot, train_info, test_info, tss_loc
-
-
-def parse_one_track(ga, bin_size, fn):
-    gast = copy.deepcopy(ga)
-    dtypes = {"chr": str, "start": int, "end": int, "score": float}
-    df = pd.read_csv(fn, delim_whitespace=True, names=["chr", "start", "end", "score"],
-                     dtype=dtypes, header=None, index_col=False)
-
-    chrd = list(df["chr"].unique())
-    df["mid"] = (df["start"] + (df["end"] - df["start"]) / 2) / bin_size
-    df = df.astype({"mid": int})
-
-    # group the scores over `key` and gather them in a list
-    grouped_scores = df.groupby("chr").agg(list)
-
-    # for each key, value in the dictionary...
-    for key, val in gast.items():
-        if key not in chrd:
-            continue
-        # first lookup the positions to update and the corresponding scores
-        pos, score = grouped_scores.loc[key, ["mid", "score"]]
-        # fancy indexing
-        gast[key][pos] += score
-
-    max_val = -1
-    for key in gast.keys():
-        gast[key] = np.log(gast[key] + 1)
-        max_val = max(np.max(gast[key]), max_val)
-    for key in gast.keys():
-        gast[key] = gast[key] / max_val
-
-    return gast
+    return one_hot, train_info, test_info
