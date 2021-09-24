@@ -95,7 +95,7 @@ def parse_hic():
 def parse_tracks(train_info, test_info, bin_size, half_num_bins):
     all_info = train_info + test_info
     track_names = pd.read_csv('white_list.txt', delimiter='\t').values.flatten()
-    step_size = 500
+    step_size = 100
     q = mp.Queue()
     ps = []
     for t in range(0, len(all_info), step_size):
@@ -104,7 +104,7 @@ def parse_tracks(train_info, test_info, bin_size, half_num_bins):
                        args=(q, sub_info, half_num_bins, bin_size,track_names,t,))
         p.start()
         ps.append(p)
-        if len(ps) >= 20:
+        if len(ps) >= 32:
             for p in ps:
                 p.join()
             print(q.get())
@@ -121,21 +121,23 @@ def parse_tracks(train_info, test_info, bin_size, half_num_bins):
 def construct_tss_matrices(q, sub_info, half_num_bins, bin_size, track_names, t):
     print(f"Worker {t}")
     output = []
-    for i in range(len(track_names)):
+    for i in range(len(sub_info)):
         output.append([])
     for ti, track in enumerate(track_names):
-        if ti % 500 == 0:
+        if ti % 1000 == 0:
             print(f"Worker {t} - {ti}")
-        bw = pyBigWig.open(f"bw/{track}.16nt.bigwig")
+        bw = pyBigWig.open(f"/home/user/data/white_tracks/{track}.16nt.bigwig")
         for i, info in enumerate(sub_info):
             start = info[1] - half_num_bins * bin_size
             end = info[1] + (1 + half_num_bins) * bin_size
-            out = bw.stats(info[0], start, end, type="mean", nBins=801)
+            out = bw.stats(info[0], start, end, type="mean", nBins=half_num_bins*2 + 1)
             out = np.asarray(out, dtype=np.float16)
             out[np.isnan(out)] = 0
             output[i].append(out)
-    for tss_track in output:
-        joblib.dump(np.asarray(tss_track, dtype=np.float16), "parsed_data/" + sub_info[-1] + ".gz", compress="lz4")
+        bw.close()
+    # print(np.asarray(output).shape)
+    for i in range(len(sub_info)):
+        joblib.dump(np.asarray(output[i], dtype=np.float16), "parsed_data/" + str(sub_info[i][-1]) + ".gz", compress="lz4")
     q.put(None)
 
 

@@ -59,9 +59,9 @@ num_hic_bins = int(input_size / hic_bin_size)
 num_bins = 801  # int(input_size / bin_size)
 half_num_bins = 400
 mid_bin = math.floor(num_bins / 2)
-BATCH_SIZE = 1
+BATCH_SIZE = 2
 out_stack_num = 6011
-STEPS_PER_EPOCH = 500
+STEPS_PER_EPOCH = 200
 chromosomes = ["chrX"]  # "chrY"
 for i in range(1, 23):
     chromosomes.append("chr" + str(i))
@@ -176,7 +176,7 @@ def run_epoch(q, k, train_info, test_info, one_hot, track_names, eval_track_name
             else:
                 ns = one_hot[info[0]][start:start + input_size]
             input_sequences.append(ns)
-            out_arr = joblib.load("parsed_data/" + info[-1] + ".gz")
+            out_arr = joblib.load("parsed_data_processed/" + info[-1] + ".gz")
             output_scores.append(out_arr)
         except Exception as e:
             print(e)
@@ -329,7 +329,7 @@ def run_epoch(q, k, train_info, test_info, one_hot, track_names, eval_track_name
 
             test_output = []
             for i, info in enumerate(test_info):
-                out_arr = joblib.load("parsed_data/" + info[-1] + ".gz")
+                out_arr = joblib.load("parsed_data_processed/" + info[-1] + ".gz")
                 test_output.append(out_arr)
             test_output = np.asarray(test_output, dtype=np.float16)
 
