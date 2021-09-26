@@ -5,16 +5,21 @@ import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
 import seaborn as sns
+import gc
 
 os.chdir(open("data_dir").read().strip())
 
 avg_arr = []
 directory = "parsed_data"
 all_maxes = None
-for filename in os.listdir(directory):
+for i, filename in enumerate(os.listdir(directory)):
+    if i % 500 == 0:
+        print(i, end=" ")
+        all_maxes = np.max(all_maxes, axis=0)
+        gc.collect()
     if filename.endswith(".gz"):
         one_mat = joblib.load(os.path.join(directory, filename))
-        one_mat[one_mat == np.inf] = np.finfo(np.float16).max
+        one_mat[one_mat == np.inf] = np.finfo(np.float16).max - 1
         maxes = one_mat.max(axis=1)
         if all_maxes is None:
             all_maxes = maxes
@@ -26,13 +31,22 @@ all_maxes = np.log(all_maxes + 1)
 print(f"max {np.max(all_maxes)} min {np.min(all_maxes)} mean {np.mean(all_maxes)} median {np.median(all_maxes)}")
 np.savetxt("all_maxes.csv", all_maxes, delimiter=",")
 
-for filename in os.listdir(directory):
+for i, filename in enumerate(os.listdir(directory)):
+    if i % 500 == 0:
+        print(i, end=" ")
+        gc.collect()
     if filename.endswith(".gz"):
         one_mat = joblib.load(os.path.join(directory, filename))
+        one_mat[one_mat == np.inf] = np.finfo(np.float16).max - 1
+        one_mat[one_mat == np.finfo(np.float16).max] = np.finfo(np.float16).max - 1
         one_mat = np.log(one_mat + 1)
         one_mat = one_mat / all_maxes[:, None]
+        if not np.isfinite(one_mat).all():
+            print("Problem!" + filename)
+        one_mat[np.isnan(one_mat)] = 0
         joblib.dump(one_mat, "parsed_data_processed/" + filename, compress="lz4")
-        avg_arr.append(one_mat)
+        if len(avg_arr) < 1000:
+            avg_arr.append(one_mat)
 
 track_names = pd.read_csv('data/white_list.txt', delimiter='\t').values.flatten()
 avg_arr = np.mean(np.asarray(avg_arr), axis=0)

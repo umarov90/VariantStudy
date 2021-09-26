@@ -47,7 +47,7 @@ matplotlib.use("agg")
 # random.seed(seed)
 # np.random.seed(seed)
 # tf.random.set_seed(seed)
-model_folder = "model1"
+model_folder = "model_6010"
 model_name = "expression_model_1.h5"
 figures_folder = "figures_1"
 input_size = 120100
@@ -59,8 +59,8 @@ num_hic_bins = int(input_size / hic_bin_size)
 num_bins = 801  # int(input_size / bin_size)
 half_num_bins = 400
 mid_bin = math.floor(num_bins / 2)
-BATCH_SIZE = 2
-out_stack_num = 6011
+BATCH_SIZE = 4
+out_stack_num = 6010
 STEPS_PER_EPOCH = 200
 chromosomes = ["chrX"]  # "chrY"
 for i in range(1, 23):
@@ -87,7 +87,7 @@ def recompile(q):
     q.put(None)
 
 
-def create_model(q, heads):
+def create_model(q):
     import tensorflow as tf
     strategy = tf.distribute.experimental.MultiWorkerMirroredStrategy()
     with strategy.scope():
@@ -104,10 +104,6 @@ def create_model(q, heads):
         Path(model_folder).mkdir(parents=True, exist_ok=True)
         our_model.save(model_folder + "/" + model_name)
         print("Model saved " + model_folder + "/" + model_name)
-        for head_id in range(len(heads)):
-            joblib.dump(our_model.get_layer("last_conv1d").get_weights(),
-                        model_folder + "/head" + str(head_id), compress=3)
-        print("Heads saved")
     q.put(None)
 
 
@@ -637,8 +633,8 @@ def change_seq(x):
 
 if __name__ == '__main__':
     # get the current folder absolute path
-    os.chdir(open("data_dir").read().strip())
-    # os.chdir("/home/acd13586qv/variants")
+    # os.chdir(open("data_dir").read().strip())
+    os.chdir("/home/acd13586qv/variants")
     # How does enformer handle strands???
     # read training notebook
     # our_model = mo.simple_model(input_size, num_regions, out_stack_num)
@@ -648,10 +644,8 @@ if __name__ == '__main__':
     Path(figures_folder + "/" + "hic").mkdir(parents=True, exist_ok=True)
 
     one_hot, train_info, test_info = parser.get_sequences(chromosomes, input_size)
-    if Path("pickle/gas_keys.gz").is_file():
+    if Path("pickle/track_names.gz").is_file():
         track_names = joblib.load("pickle/track_names.gz")
-        output_train = joblib.load("pickle/output_train.gz")
-        output_test = joblib.load("pickle/output_test.gz")
     else:
         track_names = parser.parse_tracks(train_info, test_info, bin_size, half_num_bins)
 
