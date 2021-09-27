@@ -28,7 +28,7 @@ def simple_model(input_size, num_regions, cell_num):
     # x = Dropout(0.5)(x)
     for i in range(10):
         prev = x
-        x = Conv1D(128, kernel_size=3, dilation_rate=2 ** (i+1),
+        x = Conv1D(256, kernel_size=3, dilation_rate=2 ** (i+1),
                    name="dilatation_" + str(i+1), padding='same')(x)
         x = BatchNormalization(name="bn_dilation_" + str(i+1))(x)
         if i != 0:
@@ -55,11 +55,14 @@ def simple_model(input_size, num_regions, cell_num):
     #     encoded_patches = Add()([x3, x2])
     #
     # x = LayerNormalization(epsilon=1e-6, name="ln_rep")(encoded_patches)
+    x = Conv1D(2048, kernel_size=1, strides=1, name="pointwise", activation=tf.nn.gelu)(x)
+    print("before trim")
+    print(x)
 
     target_length = 801
     trim = (x.shape[-2] - target_length) // 2
     x = x[..., trim:-trim, :]
-    x = Conv1D(2048, kernel_size=1, strides=1, name="pointwise", activation=tf.nn.gelu)(x)
+
     outputs = Conv1D(cell_num, kernel_size=1, strides=1, name="last_conv1d")(x)
     # trailing_axes = [-1, -2]
     # leading = tf.range(tf.rank(x) - len(trailing_axes))
@@ -115,7 +118,7 @@ def resnet_layer(inputs,
 
 def resnet_v2(input_x, num_stages, num_res_blocks):
     # Start model definition.
-    num_filters_in = 64
+    num_filters_in = 128
 
     # v2 performs Conv2D with BN-ReLU on input before splitting into 2 paths
     x = resnet_layer(inputs=input_x,

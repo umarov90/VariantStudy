@@ -61,7 +61,7 @@ half_num_bins = 400
 mid_bin = math.floor(num_bins / 2)
 BATCH_SIZE = 4
 out_stack_num = 6010
-STEPS_PER_EPOCH = 200
+STEPS_PER_EPOCH = 500
 chromosomes = ["chrX"]  # "chrY"
 for i in range(1, 23):
     chromosomes.append("chr" + str(i))
@@ -109,6 +109,12 @@ def create_model(q):
 
 def run_epoch(q, k, train_info, test_info, one_hot, track_names, eval_track_names):
     import tensorflow as tf
+
+    # physical_devices = tf.config.experimental.list_physical_devices('GPU')
+    # assert len(physical_devices) > 0, "Not enough GPU hardware devices available"
+    # for device in physical_devices:
+    #     config1 = tf.config.experimental.set_memory_growth(device, True)
+
     from tensorflow.keras import mixed_precision
     mixed_precision.set_global_policy('mixed_float16')
     strategy = tf.distribute.experimental.MultiWorkerMirroredStrategy()
@@ -189,34 +195,32 @@ def run_epoch(q, k, train_info, test_info, one_hot, track_names, eval_track_name
                              key=lambda x: -x[1])[:10]:
         print("{:>30}: {:>8}".format(name, cm.get_human_readable(size)))
 
-
-    print(datetime.now().strftime('[%H:%M:%S] ') + "Training")
     gc.collect()
     print_memory()
 
-    # if k != 0:
-    try:
-        fit_epochs = 2
-        train_data = wrap(input_sequences, output_scores, GLOBAL_BATCH_SIZE)
-        gc.collect()
-        our_model.fit(train_data, epochs=fit_epochs)
-        our_model.save(model_folder + "/" + model_name + "_temp.h5")
-        os.remove(model_folder + "/" + model_name)
-        os.rename(model_folder + "/" + model_name + "_temp.h5", model_folder + "/" + model_name)
-        # joblib.dump(our_model.get_layer("last_conv1d").get_weights(),
-        #             model_folder + "/head" + str(head_id) + "_temp", compress=3)
-        # if os.path.exists(model_folder + "/head" + str(head_id)):
-        #     os.remove(model_folder + "/head" + str(head_id))
-        # os.rename(model_folder + "/head" + str(head_id) + "_temp", model_folder + "/head" + str(head_id))
-        del train_data
-        gc.collect()
-    except Exception as e:
-        print(e)
-        print(datetime.now().strftime('[%H:%M:%S] ') + "Error while training.")
-        q.put(None)
-        return None
-
-    if k % 5 == 0:  # and k != 0
+    if k % 5 != 0:
+        print(datetime.now().strftime('[%H:%M:%S] ') + "Training")
+        try:
+            fit_epochs = 2
+            train_data = wrap(input_sequences, output_scores, GLOBAL_BATCH_SIZE)
+            gc.collect()
+            our_model.fit(train_data, epochs=fit_epochs)
+            our_model.save(model_folder + "/" + model_name + "_temp.h5")
+            os.remove(model_folder + "/" + model_name)
+            os.rename(model_folder + "/" + model_name + "_temp.h5", model_folder + "/" + model_name)
+            # joblib.dump(our_model.get_layer("last_conv1d").get_weights(),
+            #             model_folder + "/head" + str(head_id) + "_temp", compress=3)
+            # if os.path.exists(model_folder + "/head" + str(head_id)):
+            #     os.remove(model_folder + "/head" + str(head_id))
+            # os.rename(model_folder + "/head" + str(head_id) + "_temp", model_folder + "/head" + str(head_id))
+            del train_data
+            gc.collect()
+        except Exception as e:
+            print(e)
+            print(datetime.now().strftime('[%H:%M:%S] ') + "Error while training.")
+            q.put(None)
+            return None
+    else:
         print(datetime.now().strftime('[%H:%M:%S] ') + "Evaluating")
         try:
             # print("Training set")
@@ -323,11 +327,14 @@ def run_epoch(q, k, train_info, test_info, one_hot, track_names, eval_track_name
             # gc.collect()
             print("Test set")
 
-            test_output = []
+            test_output = {}
+            for i in range(len(test_info)):
+                test_output[test_info[i][2]] = {}
+
             for i, info in enumerate(test_info):
                 out_arr = joblib.load("parsed_data_processed/" + info[-1] + ".gz")
-                test_output.append(out_arr)
-            test_output = np.asarray(test_output, dtype=np.float16)
+                for t, tn in enumerate(track_names):
+                    test_output[info[2]][tn] = out_arr[t][mid_bin]
 
             final_test_pred = {}
             for i in range(len(test_info)):
@@ -361,13 +368,14 @@ def run_epoch(q, k, train_info, test_info, one_hot, track_names, eval_track_name
                         correction = -1 * int(shift_val / bin_size)
                     print(f"\n{shift_val} {comp} {test_seq.shape} predicting")
                     predictions = None
-                    for w in range(0, len(test_seq), 1000):
+                    w_step = 100
+                    for w in range(0, len(test_seq), w_step):
                         print(w, end=" ")
                         gc.collect()
                         if w == 0:
-                            predictions = our_model.predict(wrap2(test_seq[w:w+1000], GLOBAL_BATCH_SIZE))[:, :, mid_bin + correction]
+                            predictions = our_model.predict(wrap2(test_seq[w:w+w_step], GLOBAL_BATCH_SIZE))[:, :, mid_bin + correction]
                         else:
-                            new_predictions = our_model.predict(wrap2(test_seq[w:w + 1000], GLOBAL_BATCH_SIZE))[:, :, mid_bin + correction]
+                            new_predictions = our_model.predict(wrap2(test_seq[w:w + w_step], GLOBAL_BATCH_SIZE))[:, :, mid_bin + correction]
                             predictions = np.concatenate((predictions, new_predictions), dtype=np.float16)
                     for i in range(len(test_info)):
                         for it, ct in enumerate(track_names):
@@ -381,6 +389,7 @@ def run_epoch(q, k, train_info, test_info, one_hot, track_names, eval_track_name
                     print(i, end=" ")
                 for track in track_names:
                     final_test_pred[gene][track] = np.mean(final_test_pred[gene][track])
+            print("")
 
             corr_p = []
             corr_s = []
@@ -388,10 +397,8 @@ def run_epoch(q, k, train_info, test_info, one_hot, track_names, eval_track_name
                 a = []
                 b = []
                 for track in track_names:
-                    type = track[track.find("tracks_") + len("tracks_"):track.find(".")]
+                    type = track[:track.find(".")]
                     if type != "CAGE":
-                        continue
-                    if track not in eval_tracks:
                         continue
                     a.append(final_test_pred[gene][track])
                     b.append(test_output[gene][track])
@@ -408,7 +415,7 @@ def run_epoch(q, k, train_info, test_info, one_hot, track_names, eval_track_name
             #     a1.append(pred_mean)
             #     b1.append(gt_mean)
 
-            print(f"Maybe this 44444444444444 {len(corr_p)} {np.mean(corr_p)} {np.mean(corr_s)}")
+            print(f"Across genes {len(corr_p)} {np.mean(corr_p)} {np.mean(corr_s)}")
 
             # a = {}
             # b = {}
@@ -494,11 +501,11 @@ def run_epoch(q, k, train_info, test_info, one_hot, track_names, eval_track_name
             # for track_type in corrs_p.keys():
             #     print(f"{track_type} correlation : {np.mean([i[0] for i in corrs_p[track_type]])} {np.mean([i[0] for i in corrs_s[track_type]])}")
 
-            print("Accross tracks protein coding")
+            print("Across tracks")
             corrs_p = {}
             corrs_s = {}
             for track in track_names:
-                type = track[track.find("tracks_") + len("tracks_"):track.find(".")]
+                type = track[:track.find(".")]
                 a = []
                 b = []
                 for gene in final_test_pred.keys():
@@ -651,6 +658,13 @@ if __name__ == '__main__':
 
     print("Number of tracks: " + str(len(track_names)))
 
+    cage_tracks = 0
+    for track in track_names:
+        type = track[:track.find(".")]
+        if type == "CAGE":
+            cage_tracks += 1
+    print(f"CAGE tracks: {cage_tracks}")
+
     print_memory()
     for name, size in sorted(((name, sys.getsizeof(value)) for name, value in locals().items()),
                              key=lambda x: -x[1])[:10]:
@@ -693,7 +707,7 @@ if __name__ == '__main__':
     print("Training starting")
     for k in range(num_epochs):
         # run_epoch(q, k, train_info, test_info, heads, one_hot,gas_keys,eval_gas)
-        p = mp.Process(target=run_epoch, args=(q, k, train_info, test_info, one_hot, track_names, eval_track_names,))
+        p = mp.Process(target=run_epoch, args=(q, k+1, train_info, test_info, one_hot, track_names, eval_track_names,))
         p.start()
         print(q.get())
         p.join()
