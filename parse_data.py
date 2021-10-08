@@ -94,7 +94,7 @@ def parse_hic():
 
 def parse_tracks(train_info, test_info, bin_size, half_num_bins):
     all_info = train_info + test_info
-    track_names = pd.read_csv('white_list.txt', delimiter='\t').values.flatten()
+    track_names = pd.read_csv('data/white_list.txt', delimiter='\t').values.flatten()
     step_size = 100
     q = mp.Queue()
     ps = []
@@ -114,6 +114,37 @@ def parse_tracks(train_info, test_info, bin_size, half_num_bins):
         for p in ps:
             p.join()
         print(q.get())
+
+    directory = "parsed_data"
+    all_maxes = None
+    for i, filename in enumerate(os.listdir(directory)):
+        if i % 500 == 0:
+            print(i, end=" ")
+            all_maxes = np.max(all_maxes, axis=0)
+            gc.collect()
+        if filename.endswith(".gz"):
+            one_mat = joblib.load(os.path.join(directory, filename))
+            maxes = one_mat.max(axis=1)
+            if all_maxes is None:
+                all_maxes = maxes
+            else:
+                all_maxes = np.row_stack((all_maxes, maxes))
+
+    all_maxes = np.max(all_maxes, axis=0)
+    print(f"max {np.max(all_maxes)} min {np.min(all_maxes)} mean {np.mean(all_maxes)} median {np.median(all_maxes)}")
+    np.savetxt("all_maxes.csv", all_maxes, delimiter=",")
+
+    for i, filename in enumerate(os.listdir(directory)):
+        if i % 500 == 0:
+            print(i, end=" ")
+            gc.collect()
+        if filename.endswith(".gz"):
+            one_mat = joblib.load(os.path.join(directory, filename))
+            one_mat = one_mat / all_maxes[:, None]
+            if not np.isfinite(one_mat).all():
+                print("Problem!" + filename)
+            joblib.dump(one_mat, "parsed_data_processed/" + filename, compress="lz4")
+
     joblib.dump(track_names, "pickle/track_names.gz", compress=3)
     return track_names
 
@@ -135,6 +166,9 @@ def construct_tss_matrices(q, sub_info, half_num_bins, bin_size, track_names, t)
             out[np.isnan(out)] = 0
             output[i].append(out)
         bw.close()
+    output = np.asarray(output)
+    output = np.log10(output + 1)
+    output[np.isnan(output)] = 0
     # print(np.asarray(output).shape)
     for i in range(len(sub_info)):
         joblib.dump(np.asarray(output[i], dtype=np.float16), "parsed_data/" + str(sub_info[i][-1]) + ".gz", compress="lz4")

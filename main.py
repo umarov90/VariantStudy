@@ -50,18 +50,18 @@ matplotlib.use("agg")
 model_folder = "model_6010"
 model_name = "expression_model_1.h5"
 figures_folder = "figures_1"
-input_size = 120100
+input_size = 60200
 half_size = int(input_size / 2)
-bin_size = 100
+bin_size = 200
 max_shift = 0
 hic_bin_size = 10000
 num_hic_bins = int(input_size / hic_bin_size)
-num_bins = 801  # int(input_size / bin_size)
-half_num_bins = 400
+num_bins = 201
+half_num_bins = int(num_bins / 2)
 mid_bin = math.floor(num_bins / 2)
-BATCH_SIZE = 4
+BATCH_SIZE = 2
 out_stack_num = 6010
-STEPS_PER_EPOCH = 500
+STEPS_PER_EPOCH = 1000
 chromosomes = ["chrX"]  # "chrY"
 for i in range(1, 23):
     chromosomes.append("chr" + str(i))
@@ -69,7 +69,7 @@ num_epochs = 10000
 hic_track_size = 1
 
 
-def recompile(q):
+def recompile(q, lr):
     import tensorflow as tf
     strategy = tf.distribute.experimental.MultiWorkerMirroredStrategy()
     with strategy.scope():
@@ -77,7 +77,6 @@ def recompile(q):
                                                custom_objects={'SAMModel': mo.SAMModel,
                                                                'PatchEncoder': mo.PatchEncoder})
         print(datetime.now().strftime('[%H:%M:%S] ') + "Compiling model")
-        lr = 0.0005
         with strategy.scope():
             optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
             our_model.compile(loss="mse", optimizer=optimizer)
@@ -107,7 +106,7 @@ def create_model(q):
     q.put(None)
 
 
-def run_epoch(q, k, train_info, test_info, one_hot, track_names, eval_track_names):
+def run_epoch(q, k, train_info, test_info, one_hot, track_names, eval_track_names, fit_epochs):
     import tensorflow as tf
 
     # physical_devices = tf.config.experimental.list_physical_devices('GPU')
@@ -201,7 +200,6 @@ def run_epoch(q, k, train_info, test_info, one_hot, track_names, eval_track_name
     if k % 5 != 0:
         print(datetime.now().strftime('[%H:%M:%S] ') + "Training")
         try:
-            fit_epochs = 2
             train_data = wrap(input_sequences, output_scores, GLOBAL_BATCH_SIZE)
             gc.collect()
             our_model.fit(train_data, epochs=fit_epochs)
@@ -417,90 +415,6 @@ def run_epoch(q, k, train_info, test_info, one_hot, track_names, eval_track_name
 
             print(f"Across genes {len(corr_p)} {np.mean(corr_p)} {np.mean(corr_s)}")
 
-            # a = {}
-            # b = {}
-            # for gene in final_test_pred.keys():
-            #     if gene not in protein_coding:
-            #         continue
-            #     for track in gas_keys:
-            #         type = track[track.find("tracks_") + len("tracks_"):track.find(".")]
-            #         if type != "CAGE":
-            #             continue
-            #         if track not in eval_tracks:
-            #             continue
-            #         a.setdefault(gene, []).append(final_test_pred[gene][track])
-            #         b.setdefault(gene, []).append(test_output[gene][track])
-            # a1 = []
-            # b1 = []
-            # for key in a.keys():
-            #     pred_mean = np.mean(a[key])
-            #     gt_mean = np.mean(b[key])
-            #     a1.append(pred_mean)
-            #     b1.append(gt_mean)
-            #
-            # print(f"Across all genes eval tracks protein coding {stats.pearsonr(a1, b1)[0]} {stats.spearmanr(a1, b1)[0]}")
-            #
-            # a = {}
-            # b = {}
-            # for gene in final_test_pred.keys():
-            #     if gene not in protein_coding:
-            #         continue
-            #     for track in gas_keys:
-            #         type = track[track.find("tracks_") + len("tracks_"):track.find(".")]
-            #         if type != "CAGE":
-            #             continue
-            #         if track not in eval_tracks:
-            #             continue
-            #         a.setdefault(gene, []).append(final_test_pred[gene][track])
-            #         b.setdefault(gene, []).append(test_output[gene][track])
-            # a1 = []
-            # b1 = []
-            # for key in a.keys():
-            #     pred_mean = np.mean(a[key])
-            #     gt_mean = np.mean(b[key])
-            #     a1.append(pred_mean)
-            #     b1.append(gt_mean)
-            #
-            # print(
-            #     f"Across all genes eval tracks protein coding {stats.pearsonr(a1, b1)[0]} {stats.spearmanr(a1, b1)[0]}")
-            #
-            # a = {}
-            # b = {}
-            # for gene in final_test_pred.keys():
-            #     if gene not in protein_coding:
-            #         continue
-            #     for track in gas_keys:
-            #         type = track[track.find("tracks_") + len("tracks_"):track.find(".")]
-            #         if type != "CAGE":
-            #             continue
-            #         a.setdefault(gene, []).append(final_test_pred[gene][track])
-            #         b.setdefault(gene, []).append(test_output[gene][track])
-            # a1 = []
-            # b1 = []
-            # for key in a.keys():
-            #     pred_mean = np.mean(a[key])
-            #     gt_mean = np.mean(b[key])
-            #     a1.append(pred_mean)
-            #     b1.append(gt_mean)
-            #
-            # print(f"Across all genes all tracks protein coding {stats.pearsonr(a1, b1)[0]} {stats.spearmanr(a1, b1)[0]}")
-
-            # print("Accross tracks")
-            # corrs_p = {}
-            # corrs_s = {}
-            # for track in gas_keys:
-            #     type = track[track.find("tracks_") + len("tracks_"):track.find(".")]
-            #     a = []
-            #     b = []
-            #     for gene in final_test_pred.keys():
-            #         a.append(final_test_pred[gene][track])
-            #         b.append(test_output[gene][track])
-            #     corrs_p.setdefault(type, []).append((stats.pearsonr(a, b)[0], track))
-            #     corrs_s.setdefault(type, []).append((stats.spearmanr(a, b)[0], track))
-            #
-            # for track_type in corrs_p.keys():
-            #     print(f"{track_type} correlation : {np.mean([i[0] for i in corrs_p[track_type]])} {np.mean([i[0] for i in corrs_s[track_type]])}")
-
             print("Across tracks")
             corrs_p = {}
             corrs_s = {}
@@ -531,63 +445,79 @@ def run_epoch(q, k, train_info, test_info, one_hot, track_names, eval_track_name
                     myfile.write(str(np.mean([i[0] for i in corrs_p[track_type]])) + "\t")
                 myfile.write("\n")
 
-            # print("Drawing tracks")
-            # pic_count = 0
-            # for it, ct in enumerate(chosen_tracks):
-            #     if "ctss" not in ct:
-            #         continue
-            #     for i in range(len(predictions)):
-            #         if np.sum(test_output[i][it]) == 0:
-            #             continue
-            #         fig, axs = plt.subplots(2, 1, figsize=(12, 8))
-            #         vector1 = predictions[i][it]
-            #         vector2 = test_output[i][it]
-            #         x = range(num_regions)
-            #         d1 = {'bin': x, 'expression': vector1}
-            #         df1 = pd.DataFrame(d1)
-            #         d2 = {'bin': x, 'expression': vector2}
-            #         df2 = pd.DataFrame(d2)
-            #         sns.lineplot(data=df1, x='bin', y='expression', ax=axs[0])
-            #         axs[0].set_title("Prediction")
-            #         sns.lineplot(data=df2, x='bin', y='expression', ax=axs[1])
-            #         axs[1].set_title("Ground truth")
-            #         fig.tight_layout()
-            #         plt.savefig(
-            #             figures_folder + "/tracks/test_track_" + str(testinfo_small[i][2]) + "_" + str(ct) + ".png")
-            #         plt.close(fig)
-            #         pic_count += 1
-            #         if i > 20:
-            #             break
-            #     if pic_count > 100:
-            #         break
+            # for validation
+            test_output_full = []
+            for i in range(500):
+                out_arr = joblib.load("parsed_data_processed/" + test_info[i][-1] + ".gz")
+                temp = []
+                for t, tn in enumerate(track_names):
+                    temp.append(out_arr[t])
+                test_output_full.append(out_arr)
+            test_output_full = np.asarray(test_output_full)
 
-            # Gene regplot
-            # for c, cell in enumerate(cells):
-            #     ci = -2 + c
-            #     a = []
-            #     b = []
-            #     for i in range(len(predictions)):
-            #         if test_class[i] == 0:
-            #             continue
-            #         a.append(predictions[i][ci][mid_bin])
-            #         b.append(test_output[i][ci][mid_bin])
-            #
-            #     pickle.dump(a, open(figures_folder + "/" + str(cell) + "_a" + str(k) + ".p", "wb"),
-            #                 protocol=pickle.HIGHEST_PROTOCOL)
-            #     pickle.dump(b, open(figures_folder + "/" + str(cell) + "_b" + str(k) + ".p", "wb"),
-            #                 protocol=pickle.HIGHEST_PROTOCOL)
-            #
-            #     fig, ax = plt.subplots(figsize=(6, 6))
-            #     r, p = stats.spearmanr(a, b)
-            #
-            #     sns.regplot(x=a, y=b,
-            #                 ci=None, label="r = {0:.2f}; p = {1:.2e}".format(r, p)).legend(loc="best")
-            #
-            #     ax.set(xlabel='Predicted', ylabel='Ground truth')
-            #     plt.title("Gene expression prediction")
-            #     fig.tight_layout()
-            #     plt.savefig(figures_folder + "/corr_" + str(k) + "_" + str(cell) + ".svg")
-            #     plt.close(fig)
+            predictions = None
+            w_step = 100
+            for w in range(0, 500, w_step):
+                print(w, end=" ")
+                gc.collect()
+                if w == 0:
+                    predictions = our_model.predict(wrap2(test_seq[w:w + w_step], GLOBAL_BATCH_SIZE))[:, :,
+                                  mid_bin + correction]
+                else:
+                    new_predictions = our_model.predict(wrap2(test_seq[w:w + w_step], GLOBAL_BATCH_SIZE))[:, :,
+                                      mid_bin + correction]
+                    predictions = np.concatenate((predictions, new_predictions), dtype=np.float16)
+
+            print("Drawing tracks")
+            pic_count = 0
+            for it, ct in enumerate(track_names):
+                type = ct[:ct.find(".")]
+                if type != "CAGE":
+                    continue
+                for i in range(len(predictions)):
+                    if np.sum(test_output[i][it]) == 0:
+                        continue
+                    fig, axs = plt.subplots(2, 1, figsize=(12, 8))
+                    vector1 = predictions[i][it]
+                    vector2 = test_output[i][it]
+                    x = range(num_bins)
+                    d1 = {'bin': x, 'expression': vector1}
+                    df1 = pd.DataFrame(d1)
+                    d2 = {'bin': x, 'expression': vector2}
+                    df2 = pd.DataFrame(d2)
+                    sns.lineplot(data=df1, x='bin', y='expression', ax=axs[0])
+                    axs[0].set_title("Prediction")
+                    sns.lineplot(data=df2, x='bin', y='expression', ax=axs[1])
+                    axs[1].set_title("Ground truth")
+                    fig.tight_layout()
+                    plt.savefig(
+                        figures_folder + "/tracks/test_track_" + str(test_info[i][2]) + "_" + str(ct) + ".png")
+                    plt.close(fig)
+                    pic_count += 1
+                    if i > 20:
+                        break
+                if pic_count > 100:
+                    break
+
+            print("Drawing gene regplot")
+            for it, ct in enumerate(track_names):
+                a = []
+                b = []
+                for i in range(len(predictions)):
+                    a.append(predictions[i][it][mid_bin])
+                    b.append(test_output_full[i][it][mid_bin])
+
+                fig, ax = plt.subplots(figsize=(6, 6))
+                r, p = stats.spearmanr(a, b)
+
+                sns.regplot(x=a, y=b,
+                            ci=None, label="r = {0:.2f}; p = {1:.2e}".format(r, p)).legend(loc="best")
+
+                ax.set(xlabel='Predicted', ylabel='Ground truth')
+                plt.title("Gene expression prediction")
+                fig.tight_layout()
+                plt.savefig(figures_folder + "/corr_" + ct + ".svg")
+                plt.close(fig)
 
             # attribution
             # for c, cell in enumerate(cells):
@@ -640,8 +570,8 @@ def change_seq(x):
 
 if __name__ == '__main__':
     # get the current folder absolute path
-    # os.chdir(open("data_dir").read().strip())
-    os.chdir("/home/acd13586qv/variants")
+    os.chdir(open("data_dir").read().strip())
+    # os.chdir("/home/acd13586qv/variants")
     # How does enformer handle strands???
     # read training notebook
     # our_model = mo.simple_model(input_size, num_regions, out_stack_num)
@@ -651,6 +581,7 @@ if __name__ == '__main__':
     Path(figures_folder + "/" + "hic").mkdir(parents=True, exist_ok=True)
 
     one_hot, train_info, test_info = parser.get_sequences(chromosomes, input_size)
+
     if Path("pickle/track_names.gz").is_file():
         track_names = joblib.load("pickle/track_names.gz")
     else:
@@ -705,9 +636,17 @@ if __name__ == '__main__':
     # p.join()
     # time.sleep(1)
     print("Training starting")
+    fit_epochs = 1
+    lr = 0.0001
     for k in range(num_epochs):
         # run_epoch(q, k, train_info, test_info, heads, one_hot,gas_keys,eval_gas)
-        p = mp.Process(target=run_epoch, args=(q, k+1, train_info, test_info, one_hot, track_names, eval_track_names,))
+        if k == 100:
+            fit_epochs = 2
+            lr = 0.0002
+            recompile(lr, q)
+            p = mp.Process(target=recompile, args=(q, lr,))
+        else:
+            p = mp.Process(target=run_epoch, args=(q, k+1, train_info, test_info, one_hot, track_names, eval_track_names,fit_epochs))
         p.start()
         print(q.get())
         p.join()

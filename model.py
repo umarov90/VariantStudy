@@ -9,8 +9,8 @@ import common as cm
 from sam import sam_train_step
 import numpy as np
 
-projection_dim = 64
-num_heads = 4
+projection_dim = 128
+num_heads = 8
 transformer_units = [
     projection_dim * 2,
     projection_dim,
@@ -23,47 +23,50 @@ def simple_model(input_size, num_regions, cell_num):
     inputs = Input(shape=input_shape)
     x = inputs
     # x = Dropout(0.2)(x)
-    x = resnet_v2(x, 8, 5)
-    num_patches = 313
+    x = resnet_v2(x, 9, 2)
+    print(x)
+    num_patches = 236
     # x = Dropout(0.5)(x)
-    for i in range(10):
-        prev = x
-        x = Conv1D(256, kernel_size=3, dilation_rate=2 ** (i+1),
-                   name="dilatation_" + str(i+1), padding='same')(x)
-        x = BatchNormalization(name="bn_dilation_" + str(i+1))(x)
-        if i != 0:
-            x = Add()([x, prev])
-        x = LeakyReLU(alpha=0.1, name="act_dilation_" + str(i+1))(x)
+    # for i in range(10):
+    #     prev = x
+    #     x = Conv1D(256, kernel_size=3, dilation_rate=2 ** (i+1),
+    #                name="dilatation_" + str(i+1), padding='same')(x)
+    #     x = BatchNormalization(name="bn_dilation_" + str(i+1))(x)
+    #     if i != 0:
+    #         x = Add()([x, prev])
+    #     x = LeakyReLU(alpha=0.1, name="act_dilation_" + str(i+1))(x)
 
-    # encoded_patches = PatchEncoder(num_patches, projection_dim)(x)
-    #
-    # # Create multiple layers of the Transformer block.
-    # for i in range(transformer_layers):
-    #     # Layer normalization 1.
-    #     x1 = LayerNormalization(epsilon=1e-6, name="ln_" + str(i) + "_1")(encoded_patches)
-    #     # Create a multi-head attention layer.
-    #     attention_output = MultiHeadAttention(
-    #         num_heads=num_heads, key_dim=projection_dim, dropout=0.1, name="mha_" + str(i)
-    #     )(x1, x1)
-    #     # Skip connection 1.
-    #     x2 = Add()([attention_output, encoded_patches])
-    #     # Layer normalization 2.
-    #     x3 = LayerNormalization(epsilon=1e-6, name="ln_" + str(i) + "_2")(x2)
-    #     # MLP.
-    #     x3 = mlp(x3, hidden_units=transformer_units, dropout_rate=0.1, name="mlp_" + str(i))
-    #     # Skip connection 2.
-    #     encoded_patches = Add()([x3, x2])
-    #
-    # x = LayerNormalization(epsilon=1e-6, name="ln_rep")(encoded_patches)
-    x = Conv1D(2048, kernel_size=1, strides=1, name="pointwise", activation=tf.nn.gelu)(x)
+    encoded_patches = PatchEncoder(num_patches, projection_dim)(x)
+
+    # Create multiple layers of the Transformer block.
+    for i in range(transformer_layers):
+        # Layer normalization 1.
+        x1 = LayerNormalization(epsilon=1e-6, name="ln_" + str(i) + "_1")(encoded_patches)
+        # Create a multi-head attention layer.
+        attention_output = MultiHeadAttention(
+            num_heads=num_heads, key_dim=projection_dim, dropout=0.1, name="mha_" + str(i)
+        )(x1, x1)
+        # Skip connection 1.
+        x2 = Add()([attention_output, encoded_patches])
+        # Layer normalization 2.
+        x3 = LayerNormalization(epsilon=1e-6, name="ln_" + str(i) + "_2")(x2)
+        # MLP.
+        x3 = mlp(x3, hidden_units=transformer_units, dropout_rate=0.1, name="mlp_" + str(i))
+        # Skip connection 2.
+        encoded_patches = Add()([x3, x2])
+
+    x = LayerNormalization(epsilon=1e-6, name="ln_rep")(encoded_patches)
+
     print("before trim")
     print(x)
-
-    target_length = 801
+    target_length = num_regions
     trim = (x.shape[-2] - target_length) // 2
-    x = x[..., trim:-trim, :]
-
+    x = x[..., trim+1:-trim, :]
+    print("after trim")
+    print(x)
+    x = Conv1D(4096, kernel_size=1, strides=1, name="pointwise", activation=tf.nn.gelu)(x)
     outputs = Conv1D(cell_num, kernel_size=1, strides=1, name="last_conv1d")(x)
+
     # trailing_axes = [-1, -2]
     # leading = tf.range(tf.rank(x) - len(trailing_axes))
     # trailing = trailing_axes + tf.rank(x)
@@ -83,7 +86,7 @@ class SAMModel(tf.keras.Model):
 
 def resnet_layer(inputs,
                  num_filters=16,
-                 kernel_size=7,
+                 kernel_size=5,
                  strides=1,
                  activation='relu',
                  batch_normalization=True,
@@ -118,7 +121,7 @@ def resnet_layer(inputs,
 
 def resnet_v2(input_x, num_stages, num_res_blocks):
     # Start model definition.
-    num_filters_in = 128
+    num_filters_in = 512
 
     # v2 performs Conv2D with BN-ReLU on input before splitting into 2 paths
     x = resnet_layer(inputs=input_x,
