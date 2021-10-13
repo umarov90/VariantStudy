@@ -10,14 +10,21 @@ import gc
 os.chdir(open("data_dir").read().strip())
 
 avg_arr = []
-directory = "parsed_data"
+directory = "parsed_data_processed"
 
 for i, filename in enumerate(os.listdir(directory)):
     if filename.endswith(".gz"):
         one_mat = joblib.load(os.path.join(directory, filename))
-        avg_arr.append(one_mat)
-    if len(avg_arr) > 1000:
-        break
+        if one_mat.shape != (6010, 201):
+            print("shape " + filename)
+            print(one_mat.shape)
+        if not np.isfinite(one_mat).all():
+            print("not finite " + filename)
+        if np.max(one_mat) > 1.0:
+            print("max " + filename)
+            print(np.max(one_mat))
+        if len(avg_arr) < 1000:
+            avg_arr.append(one_mat)
 
 
 track_names = pd.read_csv('data/white_list.txt', delimiter='\t').values.flatten()

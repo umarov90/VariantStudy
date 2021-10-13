@@ -50,13 +50,13 @@ matplotlib.use("agg")
 model_folder = "model_6010"
 model_name = "expression_model_1.h5"
 figures_folder = "figures_1"
-input_size = 60200
+input_size = 60100
 half_size = int(input_size / 2)
-bin_size = 200
+bin_size = 100
 max_shift = 0
 hic_bin_size = 10000
 num_hic_bins = int(input_size / hic_bin_size)
-num_bins = 201
+num_bins = 401
 half_num_bins = int(num_bins / 2)
 mid_bin = math.floor(num_bins / 2)
 BATCH_SIZE = 2

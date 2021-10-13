@@ -14,6 +14,7 @@ import pyBigWig
 import matplotlib
 import matplotlib.pyplot as plt
 import seaborn as sns
+import random
 from multiprocessing import Pool, Manager
 import multiprocessing as mp
 
@@ -94,21 +95,25 @@ def parse_hic():
 
 def parse_tracks(train_info, test_info, bin_size, half_num_bins):
     all_info = train_info + test_info
-    track_names = pd.read_csv('data/white_list.txt', delimiter='\t').values.flatten()
+    track_names = pd.read_csv('data/white_list.txt', delimiter='\t').values.flatten().tolist()
     step_size = 100
     q = mp.Queue()
     ps = []
-    for t in range(0, len(all_info), step_size):
-        sub_info = all_info[t:t+step_size]
+    start = 0
+    end = len(all_info)
+    for t in range(start, end, step_size):
+        t_end = min(t+step_size, end)
+        sub_info = all_info[t:t_end]
         p = mp.Process(target=construct_tss_matrices,
                        args=(q, sub_info, half_num_bins, bin_size,track_names,t,))
         p.start()
         ps.append(p)
-        if len(ps) >= 32:
+        if len(ps) >= 12:
             for p in ps:
                 p.join()
             print(q.get())
             ps = []
+        print(f"reached {t}")
 
     if len(ps) > 0:
         for p in ps:
@@ -150,28 +155,24 @@ def parse_tracks(train_info, test_info, bin_size, half_num_bins):
 
 
 def construct_tss_matrices(q, sub_info, half_num_bins, bin_size, track_names, t):
-    print(f"Worker {t}")
-    output = []
-    for i in range(len(sub_info)):
-        output.append([])
+    print(f"Worker {t} - got {len(sub_info)} TSS to process")
+    output = np.zeros((len(sub_info), len(track_names), half_num_bins*2 + 1))
     for ti, track in enumerate(track_names):
         if ti % 1000 == 0:
             print(f"Worker {t} - {ti}")
-        bw = pyBigWig.open(f"/home/user/data/white_tracks/{track}.16nt.bigwig")
+        bw = pyBigWig.open(f"/home/user/bw/{track}.16nt.bigwig")
         for i, info in enumerate(sub_info):
             start = info[1] - half_num_bins * bin_size
             end = info[1] + (1 + half_num_bins) * bin_size
             out = bw.stats(info[0], start, end, type="mean", nBins=half_num_bins*2 + 1)
-            out = np.asarray(out, dtype=np.float16)
-            out[np.isnan(out)] = 0
-            output[i].append(out)
+            output[i, track_names.index(track), :] = out
         bw.close()
-    output = np.asarray(output)
     output = np.log10(output + 1)
     output[np.isnan(output)] = 0
+    output = output.astype('float32')
     # print(np.asarray(output).shape)
     for i in range(len(sub_info)):
-        joblib.dump(np.asarray(output[i], dtype=np.float16), "parsed_data/" + str(sub_info[i][-1]) + ".gz", compress="lz4")
+        joblib.dump(np.asarray(output[i]), "parsed_data/" + str(sub_info[i][-1]) + ".gz", compress="lz4")
     q.put(None)
 
 
