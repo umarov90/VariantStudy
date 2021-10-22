@@ -96,10 +96,11 @@ def parse_hic():
 def parse_tracks(train_info, test_info, bin_size, half_num_bins):
     all_info = train_info + test_info
     track_names = pd.read_csv('data/white_list.txt', delimiter='\t').values.flatten().tolist()
-    step_size = 100
+    step_size = 200
     q = mp.Queue()
     ps = []
     start = 0
+    nproc = 28
     end = len(all_info)
     for t in range(start, end, step_size):
         t_end = min(t+step_size, end)
@@ -108,7 +109,7 @@ def parse_tracks(train_info, test_info, bin_size, half_num_bins):
                        args=(q, sub_info, half_num_bins, bin_size,track_names,t,))
         p.start()
         ps.append(p)
-        if len(ps) >= 12:
+        if len(ps) >= nproc:
             for p in ps:
                 p.join()
             print(q.get())
@@ -125,18 +126,29 @@ def parse_tracks(train_info, test_info, bin_size, half_num_bins):
     for i, filename in enumerate(os.listdir(directory)):
         if i % 500 == 0:
             print(i, end=" ")
-            all_maxes = np.max(all_maxes, axis=0)
+            # all_maxes = np.max(all_maxes, axis=0)
             gc.collect()
         if filename.endswith(".gz"):
             one_mat = joblib.load(os.path.join(directory, filename))
-            maxes = one_mat.max(axis=1)
+            maxes = np.nanmax(one_mat, axis=1)
             if all_maxes is None:
                 all_maxes = maxes
             else:
                 all_maxes = np.row_stack((all_maxes, maxes))
 
+    clipped_max = []
+    median_max = []
+    for i in range(len(track_names)):
+        c = np.sort(all_maxes[:, i])
+        clipped_max.append(c[int(0.95 * len(c))])
+        median_max.append(c[int(0.5 * len(c))])
+    clipped_max = np.asarray(clipped_max)
+    median_max = np.asarray(median_max)
+
+    np.savetxt("clipped_maxes.csv", clipped_max, delimiter=",")
+    np.savetxt("median_maxes.csv", median_max, delimiter=",")
+
     all_maxes = np.max(all_maxes, axis=0)
-    print(f"max {np.max(all_maxes)} min {np.min(all_maxes)} mean {np.mean(all_maxes)} median {np.median(all_maxes)}")
     np.savetxt("all_maxes.csv", all_maxes, delimiter=",")
 
     for i, filename in enumerate(os.listdir(directory)):
@@ -145,7 +157,8 @@ def parse_tracks(train_info, test_info, bin_size, half_num_bins):
             gc.collect()
         if filename.endswith(".gz"):
             one_mat = joblib.load(os.path.join(directory, filename))
-            one_mat = one_mat / all_maxes[:, None]
+            one_mat = np.clip(one_mat, None, clipped_max[:, None])
+            one_mat = one_mat / clipped_max[:, None]
             if not np.isfinite(one_mat).all():
                 print("Problem!" + filename)
             joblib.dump(one_mat, "parsed_data_processed/" + filename, compress="lz4")
@@ -158,16 +171,21 @@ def construct_tss_matrices(q, sub_info, half_num_bins, bin_size, track_names, t)
     print(f"Worker {t} - got {len(sub_info)} TSS to process")
     output = np.zeros((len(sub_info), len(track_names), half_num_bins*2 + 1))
     for ti, track in enumerate(track_names):
+        type = track[:track.find(".")]
         if ti % 1000 == 0:
             print(f"Worker {t} - {ti}")
-        bw = pyBigWig.open(f"/home/user/bw/{track}.16nt.bigwig")
+        bw = pyBigWig.open(f"/home/user/data/white_tracks/{track}.16nt.bigwig")
         for i, info in enumerate(sub_info):
             start = info[1] - half_num_bins * bin_size
             end = info[1] + (1 + half_num_bins) * bin_size
-            out = bw.stats(info[0], start, end, type="mean", nBins=half_num_bins*2 + 1)
-            output[i, track_names.index(track), :] = out
+            out = bw.stats(info[0], start, end, type="max", nBins=half_num_bins*2 + 1, exact=True)
+            out = np.asarray(out)
+            out[out == None] = 0
+            out = out.astype(np.float32)
+            # if type == "CAGE":
+            out = np.log(out + 1)
+            output[i, ti, :] = out
         bw.close()
-    output = np.log10(output + 1)
     output[np.isnan(output)] = 0
     output = output.astype('float32')
     # print(np.asarray(output).shape)
@@ -192,9 +210,13 @@ def get_sequences(chromosomes, input_size):
         test_info = joblib.load("pickle/test_info.gz")
         train_info = joblib.load("pickle/train_info.gz")
     else:
-        gene_tss = pd.read_csv("data/hg38.GENCODEv38.pc_lnc.TSS.bed",
-                               sep="\t", index_col=False, names=["chrom", "start", "end", "geneID", "score", "strand"])
-        gene_info = pd.read_csv("data/hg38.GENCODEv38.pc_lnc.gene.info.tsv", sep="\t", index_col=False)
+        gene_tss = pd.read_csv("data/old_TSS_flank_0.bed",sep="\t", index_col=False, names=["chrom", "start", "end", "geneID", "score", "strand"])
+        gene_info = pd.read_csv("data/old_gene.info.tsv", sep="\t", index_col=False)
+
+        # gene_tss = pd.read_csv("data/hg38.GENCODEv38.pc_lnc.TSS.bed", sep="\t", index_col=False,
+        #                        names=["chrom", "start", "end", "geneID", "score", "strand"])
+        # gene_info = pd.read_csv("data/hg38.GENCODEv38.pc_lnc.gene.info.tsv", sep="\t", index_col=False)
+
         prom_info = pd.read_csv("data/hg38.GENCODEv38.pc_lnc.promoter.window.info.tsv", sep="\t", index_col=False)
         test_info = []
         # test_genes = prom_info.loc[(prom_info['chrom'] == "chr1") & (prom_info['max_overall_rank'] == 1)]

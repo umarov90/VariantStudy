@@ -15,7 +15,7 @@ directory = "parsed_data_processed"
 for i, filename in enumerate(os.listdir(directory)):
     if filename.endswith(".gz"):
         one_mat = joblib.load(os.path.join(directory, filename))
-        if one_mat.shape != (6010, 201):
+        if one_mat.shape != (6010, 401):
             print("shape " + filename)
             print(one_mat.shape)
         if not np.isfinite(one_mat).all():

@@ -23,39 +23,39 @@ def simple_model(input_size, num_regions, cell_num):
     inputs = Input(shape=input_shape)
     x = inputs
     # x = Dropout(0.2)(x)
-    x = resnet_v2(x, 9, 2)
+    x = resnet_v2(x, 7, 2)
     print(x)
-    num_patches = 236
+    num_patches = 470
     # x = Dropout(0.5)(x)
-    # for i in range(10):
-    #     prev = x
-    #     x = Conv1D(256, kernel_size=3, dilation_rate=2 ** (i+1),
-    #                name="dilatation_" + str(i+1), padding='same')(x)
-    #     x = BatchNormalization(name="bn_dilation_" + str(i+1))(x)
-    #     if i != 0:
-    #         x = Add()([x, prev])
-    #     x = LeakyReLU(alpha=0.1, name="act_dilation_" + str(i+1))(x)
+    for i in range(8):
+        prev = x
+        x = Conv1D(512, kernel_size=3, dilation_rate=2 ** (i+1),
+                   name="dilatation_" + str(i+1), padding='same')(x)
+        x = BatchNormalization(name="bn_dilation_" + str(i+1))(x)
+        if i != 0:
+            x = Add()([x, prev])
+        x = LeakyReLU(alpha=0.1, name="act_dilation_" + str(i+1))(x)
 
-    encoded_patches = PatchEncoder(num_patches, projection_dim)(x)
-
-    # Create multiple layers of the Transformer block.
-    for i in range(transformer_layers):
-        # Layer normalization 1.
-        x1 = LayerNormalization(epsilon=1e-6, name="ln_" + str(i) + "_1")(encoded_patches)
-        # Create a multi-head attention layer.
-        attention_output = MultiHeadAttention(
-            num_heads=num_heads, key_dim=projection_dim, dropout=0.1, name="mha_" + str(i)
-        )(x1, x1)
-        # Skip connection 1.
-        x2 = Add()([attention_output, encoded_patches])
-        # Layer normalization 2.
-        x3 = LayerNormalization(epsilon=1e-6, name="ln_" + str(i) + "_2")(x2)
-        # MLP.
-        x3 = mlp(x3, hidden_units=transformer_units, dropout_rate=0.1, name="mlp_" + str(i))
-        # Skip connection 2.
-        encoded_patches = Add()([x3, x2])
-
-    x = LayerNormalization(epsilon=1e-6, name="ln_rep")(encoded_patches)
+    # encoded_patches = PatchEncoder(num_patches, projection_dim)(x)
+    #
+    # # Create multiple layers of the Transformer block.
+    # for i in range(transformer_layers):
+    #     # Layer normalization 1.
+    #     x1 = LayerNormalization(epsilon=1e-6, name="ln_" + str(i) + "_1")(encoded_patches)
+    #     # Create a multi-head attention layer.
+    #     attention_output = MultiHeadAttention(
+    #         num_heads=num_heads, key_dim=projection_dim, dropout=0.1, name="mha_" + str(i)
+    #     )(x1, x1)
+    #     # Skip connection 1.
+    #     x2 = Add()([attention_output, encoded_patches])
+    #     # Layer normalization 2.
+    #     x3 = LayerNormalization(epsilon=1e-6, name="ln_" + str(i) + "_2")(x2)
+    #     # MLP.
+    #     x3 = mlp(x3, hidden_units=transformer_units, dropout_rate=0.1, name="mlp_" + str(i))
+    #     # Skip connection 2.
+    #     encoded_patches = Add()([x3, x2])
+    #
+    # x = LayerNormalization(epsilon=1e-6, name="ln_rep")(encoded_patches)
 
     print("before trim")
     print(x)
@@ -207,6 +207,24 @@ def positional_encoding(position, d_model):
   pos_encoding = angle_rads[np.newaxis, ...]
 
   return tf.cast(pos_encoding, dtype=tf.float32)
+
+
+def wrap(input_sequences, output_scores, bs):
+    train_data = tf.data.Dataset.from_tensor_slices((input_sequences, output_scores))
+    train_data = train_data.batch(bs)
+    options = tf.data.Options()
+    options.experimental_distribute.auto_shard_policy = tf.data.experimental.AutoShardPolicy.DATA
+    train_data = train_data.with_options(options)
+    return train_data
+
+
+def wrap2(input_sequences, bs):
+    train_data = tf.data.Dataset.from_tensor_slices(input_sequences)
+    train_data = train_data.batch(bs)
+    options = tf.data.Options()
+    options.experimental_distribute.auto_shard_policy = tf.data.experimental.AutoShardPolicy.DATA
+    train_data = train_data.with_options(options)
+    return train_data
 
 
 class PatchEncoder(Layer):
